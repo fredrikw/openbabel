@@ -688,6 +688,14 @@ M  END
             mol.draw(show=False, update=True)
         assert(True) # Segfaults before...
 
+    def testGen3D(self):
+        """Check for regressions to #2108"""
+        smi = 'C1CCCC1'
+        mol = pybel.readstring("smi", smi)
+        gen3d = ob.OBOp.FindType("Gen3D")
+        gen3d.Do(mol.OBMol)
+        assert True # Segfaults before
+
 
 class NewReactionHandling(PythonBindings):
 
