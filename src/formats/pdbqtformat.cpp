@@ -22,6 +22,7 @@ GNU General Public License for more details.
 
 #include <openbabel/babelconfig.h>
 #include <openbabel/obmolecformat.h>
+#include <openbabel/obfunctions.h>
 #include <openbabel/mol.h>
 #include <openbabel/atom.h>
 #include <openbabel/elements.h>
@@ -304,6 +305,10 @@ namespace OpenBabel
 
     mol.SetChainsPerceived();
 
+    // Guess how many hydrogens are present on each atom based on typical valencies (from pdbformat.cpp)
+    FOR_ATOMS_OF_MOL(matom, mol)
+      OBAtomAssignTypicalImplicitHydrogens(&*matom);
+
     // clean out remaining blank lines
     std::streampos ipos;
     do
@@ -398,7 +403,7 @@ namespace OpenBabel
     }
 
     double charge = atom->GetPartialCharge();
-    snprintf(buffer, BUFF_SIZE, "%s%5d %-4s %-3s %c%4d%c   %8.3f%8.3f%8.3f  0.00  0.00    %+5.3f %.2s",
+    snprintf(buffer, BUFF_SIZE, "%s%5d %-4s %-3s %c%4d%c   %8.3f%8.3f%8.3f  0.00  0.00  %+8.3f %-2.2s",
       het?"HETATM":"ATOM  ",
       index,
       type_name,
