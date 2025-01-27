@@ -542,7 +542,6 @@ charge 1
         """Check that piped input works with --separate, see https://github.com/openbabel/openbabel/issues/2386"""
         self.canFindExecutable("obabel")
         output, err = run_exec("[Na].[Cl]", "obabel -ismi -ocan --separate")
-        print(output, err)
         self.assertEqual(output, "[Na]\t#1\n[Cl]\t#2\n")
 
 
