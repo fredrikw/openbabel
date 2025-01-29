@@ -272,7 +272,7 @@ void testPdbOccupancies()
   string pdb = conv.WriteString(&mol);
   conv.AddOption("o", OBConversion::OUTOPTIONS);
   pdb = conv.WriteString(&mol);
-  cerr << pdb << endl;
+
   OB_ASSERT(pdb.find("HETATM    1 NA   UNL     1       0.325   0.000   4.425  0.36") != string::npos);
   OB_ASSERT(pdb.find("HETATM   17  O   UNL     8       1.954   8.956   3.035  1.00") != string::npos);
 
