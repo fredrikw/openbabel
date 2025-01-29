@@ -708,7 +708,7 @@ class Molecule(object):
 
             filedes, filename = tempfile.mkstemp()
 
-        if show or filename:
+        if show or (filedes is None):
             workingmol.write("_png2", filename=filename, overwrite=True)
 
         if show:
