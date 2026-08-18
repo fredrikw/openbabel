@@ -50,7 +50,7 @@ namespace OpenBabel
     }
 
     const char* SpecificationURL() override
-    { return "http://abinit.org/" ; }  // optional
+    { return "https://www.abinit.org/"; }
 
     //Flags() can return be any the following combined by | or be omitted if none apply
     // NOTREADABLE  READONEONLY  NOTWRITABLE  WRITEONEONLY
@@ -87,7 +87,7 @@ namespace OpenBabel
     vector<string> vs;
 
     OBAtom *atom;
-    int natom;
+    int natom = 0;
     vector<int> atomicNumbers, atomTypes;
     double x, y, z;
     vector<vector3> atomPositions;
@@ -131,10 +131,12 @@ namespace OpenBabel
           tokenize(vs, buffer);
 
           // first line, rprim takes up a token
+          if (vs.size() > 3) {
           x = atof((char*)vs[1].c_str()) * unit;
           y = atof((char*)vs[2].c_str()) * unit;
 	  z = atof((char*)vs[3].c_str()) * unit;
 	  atomPositions.push_back(vector3(x, y, z));
+          }
 	  // get next line
 	  ifs.getline(buffer,BUFF_SIZE);
 	  tokenize(vs, buffer);
@@ -180,7 +182,9 @@ namespace OpenBabel
         else if (strstr(buffer, "Symmetries")) {
           tokenize(vs, buffer, "()");
           // Should be something like (#160)
-          symmetryCode = atoi(vs[1].substr(1).c_str());
+          if (vs.size() > 1 && vs[1].size() > 1) {
+            symmetryCode = atoi(vs[1].substr(1).c_str());
+          }
         }
         else if (strstr(buffer, "typat")) {
           atomTypes.clear();
@@ -209,16 +213,26 @@ namespace OpenBabel
         // forces
       }
 
+    if (natom == 0 || (int)atomTypes.size() < natom || atomicNumbers.empty()) {
+      mol.EndModify();
+      return false;
+    }
+
     for (int i = 0; i < natom; ++i) {
       atom = mol.NewAtom();
       //set atomic number
       int idx = atom->GetIdx();
       int type = atomTypes[idx - 1];
+      if (type < 0 || type >= (int)atomicNumbers.size())
+        continue;
       atom->SetAtomicNum(atomicNumbers[type]);
       // we set the coordinates by conformers in another loop
     }
 
     mol.EndModify();
+
+    if (natom == 0)
+      return false;
 
     int numConformers = atomPositions.size() / natom;
     for (int i = 0; i < numConformers; ++i) {
@@ -231,8 +245,13 @@ namespace OpenBabel
       }
       mol.AddConformer(coordinates);
     }
-    // Delete first conformer, created by EndModify, bunch of 0s
-    mol.DeleteConformer(0);
+    // Delete first conformer, created by EndModify, bunch of 0s -- but only
+    // if we actually added real conformers above. If the file declared atoms
+    // but supplied too few positions (numConformers == 0), deleting the only
+    // conformer would leave the molecule's active coordinate pointer dangling
+    // and crash the ConnectTheDots() below.
+    if (mol.NumConformers() > 1)
+      mol.DeleteConformer(0);
     // Set geometry to last one
     mol.SetConformer(mol.NumConformers() - 1);
 

@@ -1,4 +1,4 @@
-"""Test OpenBabel executables from Python
+r"""Test OpenBabel executables from Python
 
 Note: Python bindings not used
 
@@ -27,7 +27,7 @@ class TestSym(BaseTest):
     def testSingleHit(self):
         """PR#2955101 - Difficulty reading from a fastsearch index"""
 
-        smiles = """C12(C(N(C(=O)C)c3c2cccc3)=O)Nc2c(ccc(c2N1)OCCCC)OCCCC
+        smiles = r"""C12(C(N(C(=O)C)c3c2cccc3)=O)Nc2c(ccc(c2N1)OCCCC)OCCCC
 n1c([nH]c(cc1c1ccccc1)=O)c1ccc(cc1)Br
 n1c(nc2c(c1N(C)C)cccc2)c1c(O)cccc1
 C1(/[CH]2[CH]3\C(=C4/CC(C)(C)NC(C4)(C)C)C=C[CH]3[CH]1C=C2)=C1/CC(C)(C)NC(C1)(C)C
@@ -42,15 +42,15 @@ c12[C]3([C@H]4([N@@](CCc1c1ccccc1[nH]2)C[C@H](C=C4CC)C3))C(=O)OC"""
         outputfile.write(smiles)
         outputfile.close()
 
-        output, error = run_exec("obabel ten.smi -O ten.fs")
+        output, error = run_exec(None, ["obabel", "ten.smi", "-O", "ten.fs"])
         self.canFindFile("ten.fs")
         self.assertConverted(error, 10)
 
         query = "Nc2nc(c1ccccc1)nc3ccccc23"
-        output, error = run_exec("obabel ten.fs -ifs -s %s -osmi" % query)
+        output, error = run_exec(None, ["obabel", "ten.fs", "-ifs", "-s", query, "-osmi"])
         self.assertConverted(error, 1)
 
-        output, error = run_exec("obabel ten.fs -ifs -s %s -at 0.5 -aa -osmi" % query)
+        output, error = run_exec(None, ["obabel", "ten.fs", "-ifs", "-s", query, "-at", "0.5", "-aa", "-osmi"])
         self.assertConverted(error, 1)
 
 

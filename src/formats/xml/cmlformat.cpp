@@ -29,7 +29,7 @@ GNU General Public License for more details.
 #include <openbabel/xml.h>
 #include <cfloat>
 #include <openbabel/reaction.h>
-
+#include <openbabel/kekulize.h>
 
 #ifdef WIN32
 #pragma warning (disable : 4800)
@@ -141,7 +141,7 @@ namespace OpenBabel
     };
 
     const char* SpecificationURL() override
-    {return "http://www.xml-cml.org/";}
+    { return "https://www.xml-cml.org/"; }
 
     const char* GetMIMEType() override
     { return "chemical/x-cml"; };
@@ -267,15 +267,16 @@ namespace OpenBabel
           ptitle  = xmlTextReaderGetAttribute(reader(), BAD_CAST "id");
         if(!ptitle)
           ptitle  = xmlTextReaderGetAttribute(reader(), BAD_CAST "molID");//Marvin
-        if(ptitle)
+        if(ptitle) {
           _pmol->SetTitle((const char*)ptitle);
+          xmlFree((void*)ptitle);
+        }
 
         ptitle = xmlTextReaderGetAttribute(reader(), BAD_CAST "spinMultiplicity");
-        if(ptitle)
+        if(ptitle) {
           _pmol->SetTotalSpinMultiplicity(atoi((const char*)ptitle));
-
-        // free((void*)ptitle);//libxml2 doc says "The string must be deallocated by the caller."
-
+          xmlFree((void*)ptitle); //libxml2 doc says "The string must be deallocated by the caller."
+        }
       }
     else if(name=="atomArray")
       {
@@ -835,9 +836,11 @@ namespace OpenBabel
     vector<pair<string,string> >::iterator AttributeIter;
     cmlArray::iterator BondIter;
     bool HaveWarned = false;
+    bool needs_kekulization = false; // Have we have found an aromatic bond?
     for(BondIter=BondArray.begin();BondIter!=BondArray.end();++BondIter)
       {
         int indx1=0,indx2=0, ord=0;
+        unsigned int flag=0;
         string bondstereo, BondStereoRefs;
         string colour;
         string label;
@@ -894,9 +897,11 @@ namespace OpenBabel
                   ord=2;
                 else if(bo=='T')
                   ord=3;
-                else if(bo=='A')
-                  ord=5;
-                else {
+                else if(bo=='A') {
+                  ord=1;
+                  flag |= OBBond::Aromatic;
+                  needs_kekulization = true;
+                } else {
                   char* endptr;
                   ord = strtol(value.c_str(), &endptr, 10);
                 }
@@ -922,7 +927,7 @@ namespace OpenBabel
                 //But unspecied bond order means cannot assign spinmultiplicity
                 _pmol->SetIsPatternStructure();
               }
-            _pmol->AddBond(indx1,indx2,ord,0);
+            _pmol->AddBond(indx1,indx2,ord,flag);
 
             if(!colour.empty())
               {
@@ -939,6 +944,35 @@ namespace OpenBabel
                 _pmol->GetBond(_pmol->NumBonds()-1)->SetData(dp);
               }
           }
+      }
+
+      // Kekulization is necessary if an aromatic bond is present
+      if (needs_kekulization)
+      {
+        _pmol->SetAromaticPerceived();
+        // First of all, set the atoms at the ends of the aromatic bonds to also
+        // be aromatic. This information is required for OBKekulize.
+        FOR_BONDS_OF_MOL(bond, _pmol)
+        {
+          if (bond->IsAromatic())
+          {
+            bond->GetBeginAtom()->SetAromatic();
+            bond->GetEndAtom()->SetAromatic();
+          }
+        }
+        bool ok = OBKekulize(_pmol);
+        if (!ok)
+        {
+          stringstream errorMsg;
+          errorMsg << "Failed to kekulize aromatic bonds in MOL file";
+          std::string title = _pmol->GetTitle();
+          if (!title.empty())
+            errorMsg << " (title is " << title << ")";
+          errorMsg << endl;
+          obErrorLog.ThrowError(__FUNCTION__, errorMsg.str(), obWarning);
+          // return false; Should we return false for a kekulization failure?
+        }
+        _pmol->SetAromaticPerceived(false);
       }
 
     return true;
@@ -993,9 +1027,12 @@ namespace OpenBabel
               {
                 vector<string> ids;
                 tokenize(ids, atrefsvalue);
-                int i;
-                for(i=0;i<4;++i)
-                  AtomRefIdx.push_back(AtomMap[ids[i]]);
+                if (ids.size() >= 4)
+                  {
+                    int i;
+                    for(i=0;i<4;++i)
+                      AtomRefIdx.push_back(AtomMap[ids[i]]);
+                  }
               }
 
             nextname = (++AttributeIter)->first;
@@ -1008,9 +1045,14 @@ namespace OpenBabel
                 OBAtom* patom = _pmol->GetAtom(Idx);
                 if(!patom)
                   return false;
+                if(AtomRefIdx.size() < 4)
+                  return false;
 
                 OBStereo::Ref center = patom->GetId();
-                OBStereo::Ref from = _pmol->GetAtom(AtomRefIdx[0])->GetId();
+                OBAtom* fromAtom = _pmol->GetAtom(AtomRefIdx[0]);
+                if (!fromAtom)
+                  return false;
+                OBStereo::Ref from = fromAtom->GetId();
                 if (from == center)
                   from = OBStereo::ImplicitRef;
 
@@ -1018,7 +1060,10 @@ namespace OpenBabel
                 vector<unsigned int>::const_iterator idx_cit=AtomRefIdx.begin();
                 ++idx_cit;
                 for (; idx_cit!=AtomRefIdx.end(); ++idx_cit) {
-                  OBStereo::Ref id = _pmol->GetAtom(*idx_cit)->GetId();
+                  OBAtom* refAtom = _pmol->GetAtom(*idx_cit);
+                  if (!refAtom)
+                    return false;
+                  OBStereo::Ref id = refAtom->GetId();
                   if (id == center)
                     id = OBStereo::ImplicitRef;
                   refs.push_back(id);
@@ -1080,7 +1125,7 @@ namespace OpenBabel
                     pbond2 = _pmol->GetBond(AtomRefIdx[2],AtomRefIdx[3]);
                   }
 
-                if(!pbond1 || !pbond2)
+                if(!pbond1 || !pbond2 || AtomRefIdx.empty())
                   continue;
 
                 // Create the list of 4 atomrefs
@@ -1161,7 +1206,7 @@ namespace OpenBabel
     return true;
   }
 
-  bool CMLFormat::TransferElement(cmlArray& arr)
+  bool CMLFormat::TransferElement(cmlArray& /*arr*/)
   {
     //Reads the attributes of the current node, e.g. <atom id="a1" elementType="C"/>
     //pushes each of them as a pairs into each of the members of the array
@@ -2368,7 +2413,7 @@ namespace OpenBabel
   }
 
 
-  bool CMLFormat::WriteScalarProperty(OBMol& mol,
+  bool CMLFormat::WriteScalarProperty(OBMol& /*mol*/,
     const char* title, double value, const char* dictref, const char* units, const char* convention)
   {
     static const xmlChar C_PROPERTY[]     = "property";

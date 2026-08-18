@@ -18,6 +18,7 @@ GNU General Public License for more details.
 ***********************************************************************/
 // Definition of OBConversion routines
 #include <openbabel/babelconfig.h>
+#include <openbabel/base.h>
 
 #ifdef _WIN32
 	#pragma warning (disable : 4786)
@@ -231,7 +232,7 @@ namespace OpenBabel {
     pInput(nullptr), pOutput(nullptr),
     pInFormat(nullptr),pOutFormat(nullptr), Index(0), StartNumber(1),
     EndNumber(0), Count(-1), m_IsFirstInput(true), m_IsLast(true),
-    MoreFilesToCome(false), OneObjectOnly(false), SkippedMolecules(false),
+    MoreFilesToCome(false), OneObjectOnly(false), ReadyToInput(false), SkippedMolecules(false),
     inFormatGzip(false), outFormatGzip(false),
     pOb1(nullptr), wInpos(0), wInlen(0), pAuxConv(nullptr)
   {
@@ -249,7 +250,7 @@ namespace OpenBabel {
         pInput(nullptr), pOutput(nullptr),
         pInFormat(nullptr), pOutFormat(nullptr), Index(0), StartNumber(1),
         EndNumber(0), Count(-1), m_IsFirstInput(true), m_IsLast(true),
-        MoreFilesToCome(false), OneObjectOnly(false), SkippedMolecules(false),
+        MoreFilesToCome(false), OneObjectOnly(false), ReadyToInput(false), SkippedMolecules(false),
         inFormatGzip(false), outFormatGzip(false),
         pOb1(nullptr), wInpos(0), wInlen(0), pAuxConv(nullptr)
   {
@@ -530,7 +531,11 @@ namespace OpenBabel {
         if(pInput==&cin)
           {
             if(pInput->peek()==-1) //Cntl Z Was \n but interfered with piping
-              break;
+            {
+              if (!IsOption("separate", OBConversion::GENOPTIONS))
+                break;
+              pInput->clear();
+            }
           }
         else
           rInpos = pInput->tellg();
@@ -694,6 +699,9 @@ namespace OpenBabel {
                     --Index;
                     //ReadyToInput=false;
                     pOb1 = nullptr;
+                    // The newly-read object never gets stored on this
+                    // abort path; delete it so it does not leak.
+                    delete pOb;
                     return 0;
                   }
                 //Stop after writing with single object output files
@@ -718,6 +726,8 @@ namespace OpenBabel {
 
                     ReadyToInput = false;
                     pOb1 = nullptr;
+                    // Surplus newly-read object; never stored, must free.
+                    delete pOb;
                     return Count; // >0
                   }
               }

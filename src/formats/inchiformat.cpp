@@ -97,13 +97,14 @@ bool InChIFormat::ReadMolecule(OBBase* pOb, OBConversion* pConv)
 
   if (ret!=inchi_Ret_OKAY)
   {
-    string mes = out.szMessage;
+    string mes = out.szMessage ? out.szMessage : "";
     if (!mes.empty()) {
       Trim(mes);
       obErrorLog.ThrowError("InChI code", "For " + inchi + "\n  " + mes, obWarning);
     }
     if (ret!=inchi_Ret_WARNING)
     {
+      FreeStructFromINCHI(&out);
       obErrorLog.ThrowError("InChI code", "Reading InChI failed", obError);
       return false;
     }
@@ -220,23 +221,23 @@ bool InChIFormat::ReadMolecule(OBBase* pOb, OBConversion* pConv)
     }
     case INCHI_StereoType_Tetrahedral:
     {
-      OBTetrahedralStereo::Config *ts = new OBTetrahedralStereo::Config;
-      ts->center = stereo.central_atom;
-      ts->from = stereo.neighbor[0];
-      if (ts->from == ts->center) // Handle the case where there are only three neighbours
-        ts->from = OBStereo::ImplicitRef;
-      ts->refs = OBStereo::MakeRefs(stereo.neighbor[1], stereo.neighbor[2],
-                                    stereo.neighbor[3]);
+      OBTetrahedralStereo::Config ts;
+      ts.center = stereo.central_atom;
+      ts.from = stereo.neighbor[0];
+      if (ts.from == ts.center) // Handle the case where there are only three neighbours
+        ts.from = OBStereo::ImplicitRef;
+      ts.refs = OBStereo::MakeRefs(stereo.neighbor[1], stereo.neighbor[2],
+                                   stereo.neighbor[3]);
 
       if(stereo.parity==INCHI_PARITY_EVEN)
-        ts->winding = OBStereo::Clockwise;
+        ts.winding = OBStereo::Clockwise;
       else if(stereo.parity==INCHI_PARITY_ODD)
-        ts->winding = OBStereo::AntiClockwise;
+        ts.winding = OBStereo::AntiClockwise;
       else
-        ts->specified = false;
+        ts.specified = false;
 
       OBTetrahedralStereo *obts = new OBTetrahedralStereo(pmol);
-      obts->SetConfig(*ts);
+      obts->SetConfig(ts);
       pmol->SetData(obts);
 
       break;
@@ -348,6 +349,21 @@ bool InChIFormat::WriteMolecule(OBBase* pOb, OBConversion* pConv)
         if( (from_cit==from.end() && patom->GetIdx() != pbond->GetBeginAtomIdx()) ||
             (from_cit!=from.end() && from_cit->second != patom->GetId()) )
           continue;
+
+        // The inchi_Atom neighbor/bond_type/bond_stereo arrays are fixed at
+        // MAXVAL (20) entries. This writer, unlike the InChI library, does not
+        // otherwise cap valence, so an atom with more than MAXVAL bonds would
+        // write past the end of these arrays and corrupt the adjacent
+        // heap-allocated inchi_Atom. Reject the molecule rather than truncate
+        // it: InChI cannot represent such an atom (it rejects >MAXVAL valence
+        // on its own inputs), and a truncated structure would both yield a
+        // silently wrong InChI and feed the library a degenerate atom.
+        if (nbonds >= MAXVAL) {
+          obErrorLog.ThrowError("InChI code",
+            "Atom has more bonds than InChI supports (MAXVAL); "
+            "cannot generate InChI for this molecule", obError);
+          return false;
+        }
 
         iat.neighbor[nbonds]      = pbond->GetNbrAtomIdx(patom)-1;
         int bo = pbond->GetBondOrder();

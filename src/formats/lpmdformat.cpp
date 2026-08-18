@@ -52,14 +52,14 @@ class LpmdFormat : public OBMoleculeFormat
     ;
   }
 
-  //Optional URL where the file format is specified
-  const char* SpecificationURL() override
-  { return "http://www.lpmd.cl/index.php/documentation/the-lpmd-format"; }
+  const char* SpecificationURL() override {
+    return "http://www.lpmd.cl/index.php/documentation/the-lpmd-format"; // XXX dead
+  }
 
   //Optional
   const char* GetMIMEType() override { return "chemical/lpmd"; }
 
-  int SkipObjects(int n, OBConversion* pConv) override
+  int SkipObjects(int /*n*/, OBConversion* /*pConv*/) override
   {
    return 0;
   }
@@ -94,7 +94,7 @@ class LpmdFormat : public OBMoleculeFormat
 
 LpmdFormat theLpmdFormat;
 
-bool LpmdFormat::ReadHeader( std::istream &ifs, OBMol &mol )
+bool LpmdFormat::ReadHeader(std::istream &ifs, OBMol & /*mol*/)
 {
  //Header Line
  if( ! ifs.getline(buffer,BUFF_SIZE) )

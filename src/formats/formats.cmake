@@ -21,7 +21,7 @@ set(formats_utility
   )
 set(painterformat_additional_sources ../depict/commandpainter.cpp)
 set(asciiformat_additional_sources   ../depict/asciipainter.cpp)
-if(EIGEN2_FOUND OR EIGEN3_FOUND)
+if(TARGET Eigen3::Eigen)
   set(formats_utility ${formats_utility}
       confabreport
      )
@@ -78,6 +78,7 @@ if(WITH_JSON)
   set(formats_json
     chemdoodlejsonformat
     chemicaljsonformat
+    ketformat
     pubchemjsonformat
   )
 endif()

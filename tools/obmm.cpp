@@ -64,9 +64,13 @@ GNU General Public License for more details.
 using namespace std;
 using namespace OpenBabel;
 
-int main(int argc,char **argv)
+int main()
 {
   OBForceField* pFF = OBForceField::FindForceField("MMFF94");
+  if (!pFF) {
+    cerr << "Error: MMFF94 force field not found. Ensure Open Babel plugins are installed." << endl;
+    return 1;
+  }
   pFF->SetLogFile(&cout);
   pFF->SetLogLevel(OBFF_LOGLVL_LOW);
 
@@ -271,13 +275,13 @@ int main(int argc,char **argv)
 
     if (EQn(commandline, "gen", 3)) {
       //pFF->GenerateCoordinates();
-      pFF->UpdateCoordinates(mol);
+      pFF->GetCoordinates(mol);
       continue;
     }
 
     if (EQn(commandline, "rs", 2)) {
       pFF->SystematicRotorSearch();
-      pFF->UpdateCoordinates(mol);
+      pFF->GetCoordinates(mol);
       continue;
     }
 
@@ -399,7 +403,7 @@ int main(int argc,char **argv)
       }
 
       pFF->SteepestDescent(atoi(vs[1].c_str()), OBFF_ANALYTICAL_GRADIENT);
-      pFF->UpdateCoordinates(mol);
+      pFF->GetCoordinates(mol);
 
       continue;
     }
@@ -412,7 +416,7 @@ int main(int argc,char **argv)
       }
 
       pFF->ConjugateGradients(atoi(vs[1].c_str()), OBFF_ANALYTICAL_GRADIENT);
-      pFF->UpdateCoordinates(mol);
+      pFF->GetCoordinates(mol);
 
       continue;
     }

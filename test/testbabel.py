@@ -1,4 +1,4 @@
-"""Test OpenBabel executables from Python
+r"""Test OpenBabel executables from Python
 
 Note: Python bindings not used
 
@@ -16,51 +16,37 @@ and so you can quickly develop the tests and try them out.
 
 import os
 import re
+import subprocess
 import sys
 import unittest
 
-from subprocess import CalledProcessError, Popen, PIPE, check_output, STDOUT
+from subprocess import CalledProcessError, PIPE, check_output, STDOUT
 
 INF = float("inf")
 
-def run_exec(*args):
+def run_exec(text, commandline):
     """Run one of OpenBabel's executables
 
     With two arguments (stdin, commandline) it pipes
     the stdin through the executable.
 
-    Example: run_exec("CC(=O)Cl", "obabel -ismi -oinchi")
+    >>> run_exec("CC(=O)Cl", ["obabel", "-ismi", "-oinchi"])
+    ('InChI=1S/C2H3ClO/c1-2(3)4/h1H3\\n', '1 molecule converted\\n')
 
     Return a tuple (stdout, stderr)
     """
-    if len(args) == 2:
-        text, commandline = args
-    elif len(args) == 1:
-        text, commandline = "", args[0]
-    else:
-        raise Exception("One or two arguments expected")
 
-    if sys.platform.startswith("win"):
-        broken = commandline.split()
-        exe = executable(broken[0])
-    else:
-        broken = commandline.encode().split()
-        exe = executable(broken[0].decode())
+    exe = executable(commandline[0])
     # Note that bufsize = -1 means default buffering
     # Without this, it's unbuffered and it takes 10x longer on MacOSX
-    if text:
-        p = Popen([exe] + broken[1:],
-                  stdin=PIPE, stdout=PIPE, stderr=PIPE, bufsize=1)
-        stdout, stderr = p.communicate(text.encode())
-    else:
-        p = Popen([exe] + broken[1:],
-                  stdout=PIPE, stderr=PIPE, bufsize=-1)
-        stdout, stderr = p.communicate()
+    p = subprocess.run([exe] + commandline[1:], input=text, stdout=PIPE, stderr=PIPE,
+                       bufsize=-1, universal_newlines=True)
+    stdout, stderr = p.stdout, p.stderr
 
     if p.returncode and len(stderr) == 0:
         #should never exit with an error without an error message
-        raise CalledProcessError(p.returncode,commandline,stdout.decode())
-    return stdout.decode(), stderr.decode()
+        raise CalledProcessError(p.returncode, commandline, stdout)
+    return stdout, stderr
 
 def executable(name):
     """Return the full path to an executable"""
@@ -100,7 +86,7 @@ class BaseTest(unittest.TestCase):
 
     def assertConverted(self, stderr, N):
         """Assert that N molecules were converted."""
-        pat = "(-?\d.*) molecule(?:s?) converted"
+        pat = r"(-?\d.*) molecule(?:s?) converted"
         lines = stderr.split("\n")
         convertedline =  [line for line in lines if re.match(pat, line)]
         if len(convertedline) == 0:
@@ -116,7 +102,7 @@ class TestOBabel(BaseTest):
     def testNoInput(self):
         """Ensure that this does not segfault (PR#1818)"""
         self.canFindExecutable("obabel")
-        output, error = run_exec("obabel -i")
+        output, error = run_exec(None, ["obabel", "-i"])
         self.assertGreater(len(output), 1, "Did not generate output")
         self.assertGreater(len(error), 1, "Did not generate error message")
 
@@ -124,12 +110,12 @@ class TestOBabel(BaseTest):
         # Test that -O can handle short file names
         # if not the command will show warning on 2D coords
         self.canFindExecutable("obabel")
-        _, errormsg = run_exec("CCC", "obabel -ismi -omol -Otf --gen2D")
+        _, errormsg = run_exec("CCC", ["obabel", "-ismi", "-omol", "-Otf", "--gen2D"])
         self.assertNotIn("No 2D or 3D coordinates", errormsg)
 
     def testSMItoInChI(self):
         self.canFindExecutable("obabel")
-        output, error = run_exec("CC(=O)Cl", "obabel -ismi -oinchi")
+        output, error = run_exec("CC(=O)Cl", ["obabel", "-ismi", "-oinchi"])
         self.assertEqual(output.rstrip(), "InChI=1S/C2H3ClO/c1-2(3)4/h1H3")
 
     def testRSMItoRSMI(self):
@@ -137,13 +123,13 @@ class TestOBabel(BaseTest):
         data = ["O>N>S", "O>>S", "O>N>", "O>>",
                 ">N>S", ">>S", ">>"]
         for rsmi in data:
-            output, error = run_exec('obabel -:%s -irsmi -orsmi' % rsmi)
+            output, error = run_exec(None, ['obabel', '-:%s' % rsmi, '-irsmi', '-orsmi'])
             self.assertEqual(output.rstrip(), rsmi)
         # Check handling of invalid rxn components
         data = ["Noel>N>S", "O>Noel>S", "O>N>Noel"]
         errors = ["reactant", "agent", "product"]
         for rsmi, error in zip(data, errors):
-            output, errormsg = run_exec('obabel -:%s -irsmi -orsmi' % rsmi)
+            output, errormsg = run_exec(None, ['obabel', '-:%s' % rsmi, '-irsmi', '-orsmi'])
             self.assertIn(error, errormsg)
 
     def sort(self, rsmi):
@@ -159,16 +145,16 @@ class TestOBabel(BaseTest):
         data = ["c1ccccc1", "c%11ccccc%11", "c%(1)ccccc%(1)", "c%(51)ccccc%51",
                 "c%(99999)ccccc%(99999)"]
         for smi in data:
-            output, error = run_exec("obabel -:%s -osmi" % smi)
+            output, error = run_exec(None, ["obabel", "-:%s" % smi, "-osmi"])
             self.assertEqual("c1ccccc1", output.rstrip())
         # Test negatives
         data = ["c%1ccccc%1", "c%a1cccc%a1", "c%(a1)ccccc%(a1)",
                 "c%(000001)ccccc%(000001)", "c%(51)ccccc%(15)"]
         for smi in data:
-            output, error = run_exec("obabel -:%s -osmi" % smi)
+            output, error = run_exec(None, ["obabel", "-:%s" % smi, "-osmi"])
             self.assertIn("0 molecules converted", error)
         # Now test writing of %(NNN) notation
-        output, error = run_exec("obabel %s -osmi" % self.getTestFile("102Uridine.smi"))
+        output, error = run_exec(None, ["obabel", self.getTestFile("102Uridine.smi"), "-osmi"])
         self.assertIn("%(100)", output)
 
     def testPDBQT(self):
@@ -207,51 +193,51 @@ REMARK    5  A    between atoms: CZ_11  and  OH_12
 REMARK                            x       y       z     vdW  Elec       q    Type
 REMARK                         _______ _______ _______ _____ _____    ______ ____
 ROOT
-ATOM      1  CG  TYR A   5      36.534  51.990  63.891  0.00  0.00    +0.000 A 
-ATOM      2  CD1 TYR A   5      37.369  53.085  64.053  0.00  0.00    +0.000 A 
-ATOM      3  CD2 TYR A   5      35.949  51.786  62.644  0.00  0.00    +0.000 A 
-ATOM      4  CE1 TYR A   5      37.618  53.971  62.993  0.00  0.00    +0.000 A 
-ATOM      5  CE2 TYR A   5      36.180  52.653  61.580  0.00  0.00    +0.000 A 
-ATOM      6  CZ  TYR A   5      37.010  53.742  61.763  0.00  0.00    +0.000 A 
+ATOM      1  CG  TYR A   5      36.534  51.990  63.891  1.00  0.00    +0.000 A 
+ATOM      2  CD1 TYR A   5      37.369  53.085  64.053  1.00  0.00    +0.000 A 
+ATOM      3  CD2 TYR A   5      35.949  51.786  62.644  1.00  0.00    +0.000 A 
+ATOM      4  CE1 TYR A   5      37.618  53.971  62.993  1.00  0.00    +0.000 A 
+ATOM      5  CE2 TYR A   5      36.180  52.653  61.580  1.00  0.00    +0.000 A 
+ATOM      6  CZ  TYR A   5      37.010  53.742  61.763  1.00  0.00    +0.000 A 
 ENDROOT
 BRANCH   6   7
-ATOM      7  OH  TYR A   5      37.199  54.607  60.730  0.00  0.00    +0.000 OA
-ATOM      8  HH  TYR A   5      36.875  54.171  59.926  0.00  0.00    +0.000 HD
+ATOM      7  OH  TYR A   5      37.199  54.607  60.730  1.00  0.00    +0.000 OA
+ATOM      8  HH  TYR A   5      36.875  54.171  59.926  1.00  0.00    +0.000 HD
 ENDBRANCH   6   7
 BRANCH   1   9
-ATOM      9  CB  TYR A   5      36.233  51.055  65.045  0.00  0.00    +0.000 C 
+ATOM      9  CB  TYR A   5      36.233  51.055  65.045  1.00  0.00    +0.000 C 
 BRANCH   9  10
-ATOM     10  CA  TYR A   5      35.195  51.589  66.041  0.00  0.00    +0.000 C 
+ATOM     10  CA  TYR A   5      35.195  51.589  66.041  1.00  0.00    +0.000 C 
 BRANCH  10  11
-ATOM     11  N   TYR A   5      35.078  50.693  67.193  0.00  0.00    +0.000 NA
-ATOM     12  H   TYR A   5      35.302  49.703  67.057  0.00  0.00    +0.000 HD
+ATOM     11  N   TYR A   5      35.078  50.693  67.193  1.00  0.00    +0.000 NA
+ATOM     12  H   TYR A   5      35.302  49.703  67.057  1.00  0.00    +0.000 HD
 ENDBRANCH  10  11
 BRANCH  10  13
-ATOM     13  C   TYR A   5      33.792  51.581  65.423  0.00  0.00    +0.000 C 
-ATOM     14  O   TYR A   5      33.362  50.580  64.852  0.00  0.00    +0.000 OA
+ATOM     13  C   TYR A   5      33.792  51.581  65.423  1.00  0.00    +0.000 C 
+ATOM     14  O   TYR A   5      33.362  50.580  64.852  1.00  0.00    +0.000 OA
 ENDBRANCH  10  13
 ENDBRANCH   9  10
 ENDBRANCH   1   9
 TORSDOF 5
 '''
-        output, error = run_exec(pdb, "obabel -ipdb -opdbqt")
+        output, error = run_exec(pdb, ["obabel", "-ipdb", "-opdbqt"])
         self.assertEqual(output.replace("\r", ""), pdbqt.replace("\r", ""))
 
     def testMissingPlugins(self):
         if sys.platform.startswith("win32"):
             return
-        libdir = os.environ.pop("BABEL_LIBDIR", None)
-        os.environ["BABEL_LIBDIR"] = ""
+        env = os.environ.copy()
+        env["BABEL_LIBDIR"] = ""
 
         obabel = executable("obabel")
         with self.assertRaises(CalledProcessError) as cm:
-            check_output('%s -:C -osmi' % obabel, shell=True, stderr=STDOUT, universal_newlines=True)
+            check_output(
+                [obabel, "-:C", "-osmi"],
+                stderr=STDOUT,
+                universal_newlines=True,
+                env=env,
+            )
         msg = cm.exception.output
-        if libdir:
-            os.environ["BABEL_LIBDIR"] = libdir
-        else:
-            os.environ.pop("BABEL_LIBDIR")
-
         self.assertIn('BABEL_LIBDIR', msg)
 
     def testCOFtoCAN(self):
@@ -290,7 +276,7 @@ TORSDOF 5
                 cofname = 'mol24' # Special case: 'internal name' not the same as file name
             coffile = self.getTestFile(coffilename)
             cansmi = CAN + '\t' + cofname # Expected SMILES line plus molecule name
-            output, error = run_exec( "obabel -icof -ocan %s" % coffile)
+            output, error = run_exec(None, ["obabel", "-icof", "-ocan", coffile])
             self.assertEqual(output.rstrip('\r\n'), cansmi)
 
     def testCOFtoMOL(self):
@@ -314,7 +300,7 @@ TORSDOF 5
             if(cofname == 'culgi_06'):
                 cofname = 'mol24'
             coffile = self.getTestFile(coffilename)
-            output, error = run_exec( "obabel -icof -omol %s" % coffile)
+            output, error = run_exec(None, ["obabel", "-icof", "-omol", coffile])
             molfilename = cofname + '.mol'
             molfile = self.getTestFile(molfilename)
 
@@ -349,7 +335,7 @@ TORSDOF 5
             coffilename = molname + '_from_mol.cof'
             coffile = self.getTestFile(coffilename)
             molfile = self.getTestFile(molfilename)
-            output, error = run_exec( "obabel -imol -ocof %s --partialcharge none" % molfile)
+            output, error = run_exec(None, ["obabel", "-imol", "-ocof", molfile, "--partialcharge", "none"])
 
             # Chop up the output and the baseline files into single lines
             # Skip first three lines: first line contains Culgi version,
@@ -382,7 +368,7 @@ TORSDOF 5
             if(cofname == 'culgi_06'):
                 cofname = 'mol24'
             coffile = self.getTestFile(coffilename)
-            output, error = run_exec( "obabel -icof -omol2 %s" % coffile)
+            output, error = run_exec(None, ["obabel", "-icof", "-omol2", coffile])
             mol2filename = cofname + '.mol2'
             mol2file = self.getTestFile(mol2filename)
 
@@ -415,7 +401,7 @@ TORSDOF 5
             coffilename = mol2name + '_from_mol2.cof'
             coffile = self.getTestFile(coffilename)
             mol2file = self.getTestFile(mol2filename)
-            output, error = run_exec( "obabel -imol2 -ocof %s" % mol2file)
+            output, error = run_exec(None, ["obabel", "-imol2", "-ocof", mol2file])
 
             # Chop up the output and the baseline files into single lines
             # Skip first three lines: first line contains Culgi version,
@@ -431,7 +417,7 @@ TORSDOF 5
         '''This is a regression test for a segfault, but could put
         other mol2 test here'''
         mol2file = self.getTestFile('5sun_protein.mol2')
-        outputerr = run_exec( "obabel -imol2 %s -osdf" % mol2file)
+        outputerr = run_exec(None, ["obabel", "-imol2", mol2file, "-osdf"])
         self.assertGreater(len(outputerr[0]), 0, "Did not generate output")
 
     def testXYZazete(self):
@@ -472,7 +458,7 @@ GASTEIGER
      6     2     3    2
      7     3     6    1
 '''
-        output, error = run_exec(xyz, "obabel -ixyz -omol2")
+        output, error = run_exec(xyz, ["obabel", "-ixyz", "-omol2"])
         self.maxDiff = None
         self.assertEqual(output.replace("\r", ""), mol2.replace("\r", ""))
 
@@ -518,26 +504,53 @@ charge 1
      6     2     7    1
      7     2     8    1
 '''
-        output, error = run_exec(xyz, "obabel -ixyz -p7 -omol2")
+        output, error = run_exec(xyz, ["obabel", "-ixyz", "-p7", "-omol2"])
         self.maxDiff = None
         # mol2 displays element twice
         self.assertEqual(output.count('H'), 12)
 
+    def testTetrazolePhModel(self):
+        """Check tetrazole deprotonation at physiological pH (see https://github.com/openbabel/openbabel/issues/2284)"""
+        self.canFindExecutable("obabel")
+
+        tetrazoles = """c1[nH]nnn1
+c1nnn[nH]1
+c1n[nH]nn1
+c1nn[nH]n1
+"""
+        output, error = run_exec(tetrazoles, ["obabel", "-ismi", "-osmi", "-p", "7.4"])
+
+        self.assertConverted(error, 4)
+
+        smiles = [line.split()[0] for line in output.splitlines()]
+        self.assertEqual(len(smiles), 4)
+
+        for smi in smiles:
+            self.assertIn("[n-]", smi)
+            self.assertNotIn("[nH]", smi)
+            self.assertNotIn("[NH]", smi)
+            
     def testOBRMS(self):
         '''Sanity checks for obrms'''
         sdffile = self.getTestFile('testsym_2Dtests.sdf')
-        output, err = run_exec( "obrms -t 10 %s %s"%(sdffile,sdffile))
+        nmols = 7
+        output, err = run_exec(None, ["obrms", "-t", "10", sdffile, sdffile])
         # all rmsds should be zero
         rmsds = [float(line.split()[-1]) for line in output.split('\n') if line]
-        for rmsd in rmsds:
-            self.assertEqual(rmsd, 0, "RMSD not zero between identical structures")
-        output, err = run_exec( "obrms -t 10 -f %s %s" % (sdffile,sdffile))
+        self.assertEqual(rmsds, [0.0] * nmols, msg="RMSD not zero between identical structures")
+        output, err = run_exec(None, ["obrms", "-t", "10", "-f", sdffile, sdffile])
         #first zero, second nonzero, last inf
         rmsds = [float(line.split()[-1]) for line in output.split('\n') if line]
+        self.assertEqual(len(rmsds), nmols, msg="%s" % rmsds)
         self.assertEqual(rmsds[0],0)
         self.assertEqual(rmsds[1],2.73807)
         self.assertEqual(rmsds[-1],INF)
 
+    def testSeparateOnPipe(self):
+        """Check that piped input works with --separate, see https://github.com/openbabel/openbabel/issues/2386"""
+        self.canFindExecutable("obabel")
+        output, err = run_exec("[Na].[Cl]", ["obabel", "-ismi", "-ocan", "--separate"])
+        self.assertEqual(output, "[Na]\t#1\n[Cl]\t#2\n")
 
 
 if __name__ == "__main__":

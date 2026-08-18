@@ -28,6 +28,7 @@ GNU General Public License for more details.
 #include <openbabel/parsmart.h>
 
 #include <cstdlib>
+#include <memory>
 
 #include "forcefielduff.h"
 
@@ -266,7 +267,7 @@ namespace OpenBabel {
 
       double dotAbbcBccd = dot(abbc,bccd);
       tor = acos(dotAbbcBccd / (abbc.length() * bccd.length()));
-      if (IsNearZero(dotAbbcBccd) || !isfinite(tor)) { // stop any NaN or infinity
+      if (fabs(dotAbbcBccd) < 2e-6 || !isfinite(tor)) { // stop any NaN or infinity
         tor = 1.0e-3; // rather than NaN
       }
       else if (dotAbbcBccd > 0.0) {
@@ -516,7 +517,7 @@ namespace OpenBabel {
     } else
       rab = a->GetDistance(b);
 
-    if (IsNearZero(rab, 1.0e-3))
+    if (fabs(rab) < 1.0e-3)
       rab = 1.0e-3;
 
     energy = qq / rab;
@@ -729,7 +730,7 @@ namespace OpenBabel {
     if (b->GetExplicitDegree() > 4) {
       coordination = b->GetExplicitDegree();
     } else {
-      int coordDifference = ipar - b->GetExplicitDegree();
+      int coordDifference = ipar - static_cast<int>(b->GetExplicitDegree());
       if (abs(coordDifference) > 2)
         // low valent, but very different than expected by ipar
         coordination = b->GetExplicitDegree() - 1; // 4 coordinate == sp3
@@ -982,6 +983,9 @@ namespace OpenBabel {
       b = _mol.GetAtom((*angle)[0] + 1);
       a = _mol.GetAtom((*angle)[1] + 1);
       c = _mol.GetAtom((*angle)[2] + 1);
+      // Cached AngleData can reference indices that no longer exist.
+      if (a == nullptr || b == nullptr || c == nullptr)
+        continue;
 
       // skip this angle if the atoms are ignored
       if ( _constraints.IsIgnored(a->GetIdx())
@@ -1147,18 +1151,18 @@ namespace OpenBabel {
       anglecalc.zk = parameterC->_dpar[5];
 			// Precompute the force constant
 			bondPtr = _mol.GetBond(a,b);
-			bondorder = bondPtr->GetBondOrder();
-      if (bondPtr->IsAromatic())
+			bondorder = (bondPtr != nullptr) ? bondPtr->GetBondOrder() : 1;
+      if (bondPtr != nullptr && bondPtr->IsAromatic())
         bondorder = 1.5;
-      if (bondPtr->IsAmide())
+      if (bondPtr != nullptr && bondPtr->IsAmide())
         bondorder = 1.41;
 			rab = CalculateBondDistance(parameterA, parameterB, bondorder);
 
 			bondPtr = _mol.GetBond(b,c);
-			bondorder = bondPtr->GetBondOrder();
-      if (bondPtr->IsAromatic())
+			bondorder = (bondPtr != nullptr) ? bondPtr->GetBondOrder() : 1;
+      if (bondPtr != nullptr && bondPtr->IsAromatic())
         bondorder = 1.5;
-      if (bondPtr->IsAmide())
+      if (bondPtr != nullptr && bondPtr->IsAmide())
         bondorder = 1.41;
 			rbc = CalculateBondDistance(parameterB, parameterC, bondorder);
 			rac = sqrt(rab*rab + rbc*rbc - 2.0 * rab*rbc*anglecalc.cosT0);
@@ -1201,6 +1205,9 @@ namespace OpenBabel {
       b = _mol.GetAtom((*t)[1] + 1);
       c = _mol.GetAtom((*t)[2] + 1);
       d = _mol.GetAtom((*t)[3] + 1);
+      // Cached TorsionData can reference indices that no longer exist.
+      if (a == nullptr || b == nullptr || c == nullptr || d == nullptr)
+        continue;
 
       // skip this torsion if the atoms are ignored
       if ( _constraints.IsIgnored(a->GetIdx()) || _constraints.IsIgnored(b->GetIdx()) ||
@@ -1220,6 +1227,8 @@ namespace OpenBabel {
       }
 
       OBBond *bc = _mol.GetBond(b, c);
+      if (bc == nullptr)
+        continue;
       torsiontype = bc->GetBondOrder();
       if (bc->IsAromatic())
         torsiontype = 1.5;
@@ -1322,7 +1331,7 @@ namespace OpenBabel {
         }
       }
 
-      if (IsNearZero(torsioncalc.V)) // don't bother calcuating this torsion
+      if (fabs(torsioncalc.V) < 2e-6) // don't bother calcuating this torsion
         continue;
 
       // still need to implement special case of sp2-sp3 with sp2-sp2
@@ -1692,10 +1701,8 @@ namespace OpenBabel {
   bool OBForceFieldUFF::SetTypes()
   {
     vector<vector<int> > _mlist; //!< match list for atom typing
-    vector<pair<OBSmartsPattern*,string> > _vexttyp; //!< external atom type rules
+    vector<pair<std::unique_ptr<OBSmartsPattern>, string>> _vexttyp; //!< external atom type rules
     vector<vector<int> >::iterator j;
-    vector<pair<OBSmartsPattern*,string> >::iterator i;
-    OBSmartsPattern *sp;
     vector<string> vs;
     char buffer[BUFF_SIZE];
 
@@ -1712,20 +1719,18 @@ namespace OpenBabel {
       if (EQn(buffer, "atom", 4)) {
       	tokenize(vs, buffer);
 
-        sp = new OBSmartsPattern;
+        auto sp = std::unique_ptr<OBSmartsPattern>(new OBSmartsPattern);
         if (sp->Init(vs[1])) {
-          _vexttyp.push_back(pair<OBSmartsPattern*,string> (sp,vs[2]));
+          _vexttyp.emplace_back(std::move(sp), vs[2]);
         }
         else {
-          delete sp;
-          sp = nullptr;
           obErrorLog.ThrowError(__FUNCTION__, " Could not parse atom type table from UFF.prm", obInfo);
           return false;
         }
       }
     }
 
-    for (i = _vexttyp.begin();i != _vexttyp.end();++i) {
+    for (auto i = _vexttyp.begin(); i != _vexttyp.end(); ++i) {
       if (i->first->Match(_mol)) {
         _mlist = i->first->GetMapList();
         for (j = _mlist.begin();j != _mlist.end();++j) {
@@ -1773,12 +1778,6 @@ namespace OpenBabel {
 
     if (ifs)
       ifs.close();
-
-    // Free memory
-    for (i = _vexttyp.begin();i != _vexttyp.end();++i) {
-      sp = i->first;
-      delete sp;
-    }
 
     return true;
   }

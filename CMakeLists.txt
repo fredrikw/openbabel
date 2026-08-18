@@ -1,6 +1,6 @@
-# Please ensure that any changes remain compliant with 3.1.
+# Please ensure that any changes remain compliant with 3.12.
 if(NOT EMBED_OPENBABEL)
-  cmake_minimum_required(VERSION 3.1)
+  cmake_minimum_required(VERSION 3.12)
 endif()
 
 project(openbabel)
@@ -10,9 +10,6 @@ set (CMAKE_CXX_STANDARD 11)
 
 if(COMMAND cmake_policy)
   cmake_policy(SET CMP0003 NEW)
-  if(POLICY CMP0042)
-    cmake_policy(SET CMP0042 OLD)
-  endif()
 endif()
 
 include (CheckCXXCompilerFlag)
@@ -23,11 +20,15 @@ include (CheckCXXCompilerFlag)
 # Note that for "beta" releases, we should start at x.90.0 -- we've
 # had too many 1.100.1 releases. :-)
 set(BABEL_MAJ_VER   3)
-set(BABEL_MIN_VER   1)
+set(BABEL_MIN_VER   2)
 set(BABEL_PATCH_VER 1)
 
 # This should be phased out in preference for just using the target name
 set(BABEL_LIBRARY openbabel)
+
+if(CMAKE_CXX_BYTE_ORDER STREQUAL "BIG_ENDIAN")
+  add_compile_definitions(WORDS_BIGENDIAN=1)
+endif()
 
 # This would be better handled with external projects...
 if(EMBED_OPENBABEL)
@@ -141,14 +142,17 @@ endif()
 option(WITH_INCHI   "Build inchi support" ON)
 option(OPENBABEL_USE_SYSTEM_INCHI
   "Use the system inchi library." OFF)
-if(OPENBABEL_USE_SYSTEM_INCHI)
-  find_package(Inchi REQUIRED)
-  if (NOT INCHI_FOUND)
-    message(FATAL_ERROR "Inchi library not found.")
+if(WITH_INCHI)
+  if(OPENBABEL_USE_SYSTEM_INCHI)
+    find_package(Inchi REQUIRED)
+    add_definitions(-DHAVE_SYSTEM_INCHI)
+    if (NOT INCHI_FOUND)
+      message(FATAL_ERROR "Inchi library not found.")
+    endif()
+  else()
+    message(STATUS "Using included inchi library.")
+    set(INCHI_LIBRARY inchi)
   endif()
-else()
-  message(STATUS "Using included inchi library.")
-  set(INCHI_LIBRARY inchi)
 endif()
 
 if(WIN32)
@@ -172,15 +176,6 @@ if(ZLIB_FOUND)
   if(WIN32)
     add_definitions(-DDISABLE_WRITE_COMPRESSION)
   endif()
-endif()
-
-# wxWidgets instructions based on http://wiki.wxwidgets.org/CMake
-#find_package(wxWidgets COMPONENTS base core REQUIRED)
-find_package(wxWidgets COMPONENTS base core adv)
-if(wxWidgets_FOUND)
-  include(${wxWidgets_USE_FILE})
-  add_definitions(-DHAVE_WXWIDGETS)
-  include_directories(${wxWidgets_INCLUDE_DIRS})
 endif()
 
 if(MSVC)
@@ -216,15 +211,15 @@ check_include_file(conio.h      HAVE_CONIO_H)
 check_include_file(sys/time.h   HAVE_SYS_TIME_H)
 check_include_file(time.h       HAVE_TIME_H)
 check_include_file(strings.h    HAVE_STRINGS_H)
-check_include_file(rpc/xdr.h    HAVE_RPC_XDR_H)
 check_include_file(regex.h      HAVE_REGEX_H)
 check_include_file_cxx(sstream  HAVE_SSTREAM)
 
-check_symbol_exists(rint          "math.h"     HAVE_RINT)
-check_symbol_exists(snprintf      "stdio.h"    HAVE_SNPRINTF)
-check_symbol_exists(sranddev      "stdlib.h"   HAVE_SRANDDEV)
-check_symbol_exists(strcasecmp    "string.h"   HAVE_STRCASECMP)
-check_symbol_exists(strncasecmp   "string.h"   HAVE_STRNCASECMP)
+check_symbol_exists(rint             "math.h"     HAVE_RINT)
+check_symbol_exists(snprintf         "stdio.h"    HAVE_SNPRINTF)
+check_symbol_exists(sranddev         "stdlib.h"   HAVE_SRANDDEV)
+check_symbol_exists(strcasecmp       "string.h"   HAVE_STRCASECMP)
+check_symbol_exists(strncasecmp      "string.h"   HAVE_STRNCASECMP)
+check_symbol_exists(xdrstdio_create  "rpc/xdr.h"  HAVE_RPC_XDR_H)
 
 # BSDs don't link against libdl, but rather libc
 check_library_exists(dl dlopen "" HAVE_LIBDL)
@@ -347,8 +342,13 @@ if(${CMAKE_CXX_COMPILER_ID} MATCHES Intel AND UNIX)
     endif()
   endif()
 
-  set(CMAKE_C_FLAGS_RELEASE "-O3 -ipo1 -DNDEBUG -Wl,-s")
-  set(CMAKE_CXX_FLAGS_RELEASE "-O3 -ipo1 -DNDEBUG -Wl,-s")
+  if(POLICY CMP0069)
+    cmake_policy(SET CMP0069 NEW)
+    if("${CMAKE_BUILD_TYPE}" STREQUAL Release)
+      set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
+    endif()
+  endif()
+  set(CMAKE_EXE_LINKER_FLAGS_RELEASE "-Wl,-s")
 
   # define WITH_SSE2 to enable the SSE2 instruction set.
   # Available on Pentium 4, Athlon 64, and newer CPUs.
@@ -364,6 +364,15 @@ endif(${CMAKE_CXX_COMPILER_ID} MATCHES Intel AND UNIX)
 option(ENABLE_OPENMP
     "Enable support for OpenMP compilation of forcefield code"
     OFF)
+
+option(USE_RANDOMMT
+    "Use the modern OBRandomMT (Mersenne Twister) RNG instead of the deprecated OBRandom"
+    ON)
+if(USE_RANDOMMT)
+  set(OB_USE_OBRANDOMMT_DEFAULT 1)
+else()
+  set(OB_USE_OBRANDOMMT_DEFAULT 0)
+endif()
 if(ENABLE_OPENMP)
   find_package(OpenMP)
   if(OPENMP_FOUND)
@@ -375,7 +384,25 @@ endif()
 
 # Some rpath handling for Linux and Mac
 if(UNIX AND BUILD_SHARED)
-  if(APPLE)
+  if(BUILD_BY_PIP)
+    # Wheels are installed under a relocatable package directory
+    # (openbabel/).  Avoid embedding the temporary scikit-build install
+    # prefix, otherwise auditwheel/delocate cannot find libraries after the
+    # wheel is unpacked for repair.  The different depths cover the Python
+    # extension (openbabel/), command-line tools (openbabel/bin), libraries
+    # (openbabel/lib), and plugins (openbabel/lib/openbabel/<version>).
+    if(APPLE)
+      set(CMAKE_INSTALL_NAME_DIR "@rpath")
+      set(CMAKE_INSTALL_RPATH
+        "@loader_path;@loader_path/lib;@loader_path/../lib;@loader_path/..;@loader_path/../..")
+    else()
+      set(CMAKE_INSTALL_RPATH
+        "$ORIGIN;$ORIGIN/lib;$ORIGIN/../lib;$ORIGIN/..;$ORIGIN/../..")
+    endif()
+    set(CMAKE_SKIP_BUILD_RPATH FALSE)
+    set(CMAKE_BUILD_WITH_INSTALL_RPATH FALSE)
+    set(CMAKE_INSTALL_RPATH_USE_LINK_PATH FALSE)
+  elseif(APPLE)
     set(CMAKE_INSTALL_NAME_DIR ${CMAKE_INSTALL_PREFIX}/${LIB_INSTALL_DIR})
   else()
     set(CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/${LIB_INSTALL_DIR}")
@@ -399,6 +426,36 @@ if(CMAKE_COMPILER_IS_GNUCXX)
 endif()
 
 file(GLOB_RECURSE headers include/openbabel/*.h)
+
+if(BUILD_BY_PIP)
+  find_package(Python COMPONENTS Interpreter)
+  if(Python_Interpreter_FOUND)
+    execute_process(
+      COMMAND ${Python_EXECUTABLE} -m cmeel cmake
+      OUTPUT_VARIABLE CMEEL_PREFIX_PATH
+      RESULT_VARIABLE CMEEL_RESULT
+      OUTPUT_STRIP_TRAILING_WHITESPACE
+      ERROR_QUIET
+    )
+    if(CMEEL_RESULT EQUAL 0 AND NOT "${CMEEL_PREFIX_PATH}" STREQUAL "")
+      list(PREPEND CMAKE_PREFIX_PATH "${CMEEL_PREFIX_PATH}")
+    endif()
+  endif()
+endif()
+
+# Detect Eigen3 before configure_file so HAVE_EIGEN3 lands in babelconfig.h
+find_package(Eigen3 CONFIG)
+if(TARGET Eigen3::Eigen)
+  set(HAVE_EIGEN3 1)
+  add_definitions(-DHAVE_EIGEN3)
+else()
+  find_package(Eigen3 MODULE)
+  if(TARGET Eigen3::Eigen)
+    set(HAVE_EIGEN3 1)
+    add_definitions(-DHAVE_EIGEN3)
+  endif()
+endif()
+
 configure_file(${openbabel_SOURCE_DIR}/src/config.h.cmake
   ${openbabel_BINARY_DIR}/include/openbabel/babelconfig.h)
 install(FILES ${openbabel_BINARY_DIR}/include/openbabel/babelconfig.h
@@ -415,20 +472,6 @@ include_directories(${openbabel_BINARY_DIR}/include
   ${openbabel_BINARY_DIR}/data
   ${openbabel_SOURCE_DIR}/include
 )
-
-#cjh
-find_package(Eigen3)
-if(EIGEN3_FOUND)
-  add_definitions(-DHAVE_EIGEN -DHAVE_EIGEN3)
-  include_directories(${EIGEN3_INCLUDE_DIR})
-else()
-  find_package(Eigen2) # find and setup Eigen2
-  if(EIGEN2_FOUND)
-    add_definitions (-DHAVE_EIGEN)
-    include_directories(${EIGEN2_INCLUDE_DIR})
-  endif()
-endif()
-#cjh
 
 
 find_package(Boost COMPONENTS filesystem iostreams unit_test_framework)
@@ -454,7 +497,7 @@ if(WITH_MAEPARSER)
 
     else()
 
-      set(MAEPARSER_VERSION "v1.2.3" CACHE STRING "Maeparser fallback version to download")
+      set(MAEPARSER_VERSION "v1.3.3" CACHE STRING "Maeparser fallback version to download")
 
       set(MAEPARSER_DIR "${openbabel_SOURCE_DIR}/external/maeparser-${MAEPARSER_VERSION}")
 
@@ -513,7 +556,8 @@ if(WITH_COORDGEN)
 
     else()
 
-      set(COORDGEN_VERSION "master" CACHE STRING "Coordgen fallback version to download")
+      # v3.0.2-10-gd20e735
+      set(COORDGEN_VERSION "d20e735d96480385b2e257522288004038a08cc9" CACHE STRING "Coordgen fallback version to download")
 
       set(COORDGEN_DIR "${openbabel_SOURCE_DIR}/external/coordgen-${COORDGEN_VERSION}")
 
@@ -571,9 +615,9 @@ if(WITH_JSON)
   endif()
   # Otherwise download rapidjson to openbabel source directory
   if (NOT RAPIDJSON_FOUND OR RAPIDJSON_VERSION VERSION_LESS ${RAPIDJSON_VERSION_MIN})
-    set(RAPIDJSON_VERSION 1.1.0)
+    set(RAPIDJSON_VERSION "7c73dd7de7c4f14379b781418c6e947ad464c818")
     if(NOT EXISTS "${openbabel_SOURCE_DIR}/external/rapidjson-${RAPIDJSON_VERSION}")
-      file(DOWNLOAD "https://github.com/Tencent/rapidjson/archive/v${RAPIDJSON_VERSION}.tar.gz"
+      file(DOWNLOAD "https://github.com/Tencent/rapidjson/archive/${RAPIDJSON_VERSION}.tar.gz"
         "${openbabel_SOURCE_DIR}/external/rapidjson-${RAPIDJSON_VERSION}.tar.gz" STATUS status)
       execute_process(COMMAND ${CMAKE_COMMAND} -E tar zxf
         ${openbabel_SOURCE_DIR}/external/rapidjson-${RAPIDJSON_VERSION}.tar.gz
@@ -590,7 +634,12 @@ if(WITH_JSON)
   endif()
 endif()
 
-find_package(Cairo)
+if(NOT BUILD_BY_PIP OR BUILD_WHEEL_CAIRO)
+  find_package(Cairo)
+else()
+  set(CAIRO_FOUND FALSE)
+  message(STATUS "Skipping Cairo for wheel builds. Set BUILD_WHEEL_CAIRO=ON to enable PNG output support.")
+endif()
 if(CAIRO_FOUND)
   message(STATUS "Cairo found. PNG output will be supported.")
 else(CAIRO_FOUND)
@@ -632,7 +681,12 @@ endif()
 
 if(BUILD_GUI)
   message(STATUS "Attempting to build the GUI")
+  # wxWidgets instructions based on http://wiki.wxwidgets.org/CMake
+  find_package(wxWidgets COMPONENTS base core adv)
   if(wxWidgets_FOUND)
+    include(${wxWidgets_USE_FILE})
+    add_definitions(-DHAVE_WXWIDGETS)
+    include_directories(${wxWidgets_INCLUDE_DIRS})
     message(STATUS "   wxWidgets found => GUI will be built")
     add_subdirectory(src/GUI)
   else()
@@ -668,6 +722,12 @@ option(PHP_BINDINGS "Build PHP bindings" OFF)
 
 # Should Python bindings be built?
 option(PYTHON_BINDINGS "Build Python bindings" OFF)
+
+# Install Python bindings into the scikit-build wheel package directory when
+# building through pip/cibuildwheel. Normal CMake installs keep using the
+# interpreter platlib path.
+option(BUILD_BY_PIP "Install Python bindings relative to CMAKE_INSTALL_PREFIX for wheel builds" OFF)
+option(BUILD_WHEEL_CAIRO "Enable Cairo-backed PNG depiction support in wheel builds" OFF)
 
 # Should Ruby bindings be built?
 option(RUBY_BINDINGS "Build Ruby bindings" OFF)
@@ -713,7 +773,8 @@ write_basic_package_version_file("${openbabel_BINARY_DIR}/OpenBabel3ConfigVersio
   COMPATIBILITY AnyNewerVersion)
 configure_package_config_file("${openbabel_SOURCE_DIR}/OpenBabel3Config.cmake.in"
   "${openbabel_BINARY_DIR}/OpenBabel3Config.cmake"
-  INSTALL_DESTINATION "${OB_CONFIG_DIR}")
+  INSTALL_DESTINATION "${OB_CONFIG_DIR}"
+  PATH_VARS OpenBabel3_INCLUDE_DIRS)
 
 install(EXPORT openbabel-targets
   DESTINATION "${OB_CONFIG_DIR}"

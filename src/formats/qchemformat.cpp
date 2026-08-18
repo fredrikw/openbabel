@@ -47,7 +47,7 @@ namespace OpenBabel
     }
 
     const char* SpecificationURL() override
-    { return "http://www.q-chem.com/"; }  // optional
+    { return "https://www.q-chem.com/"; }
 
     //Flags() can return be any the following combined by | or be omitted if none apply
     // NOTREADABLE  READONEONLY  NOTWRITABLE  WRITEONEONLY
@@ -84,7 +84,7 @@ namespace OpenBabel
     }
 
     const char* SpecificationURL() override
-    { return "http://www.q-chem.com/"; }  // optional
+    { return "https://www.q-chem.com/"; }
 
     //Flags() can return be any the following combined by | or be omitted if none apply
     // NOTREADABLE  READONEONLY  NOTWRITABLE  WRITEONEONLY
@@ -207,16 +207,19 @@ namespace OpenBabel
             while (vs.size() >= 5)
               {
                 atom = mol.GetAtom(atoi(vs[2].c_str()));
-                OBPairData *nmrShift = new OBPairData();
-                nmrShift->SetAttribute("NMR Isotropic Shift");
+                if (atom)
+                  {
+                    OBPairData *nmrShift = new OBPairData();
+                    nmrShift->SetAttribute("NMR Isotropic Shift");
 
-                // We want to round this to 2 decimals
-                // So convert to a float and print it as a new string
-                float shift = static_cast<float> (atof(vs[3].c_str()));
-                snprintf(tag, BUFF_SIZE, "%7.2f", shift);
+                    // We want to round this to 2 decimals
+                    // So convert to a float and print it as a new string
+                    float shift = static_cast<float> (atof(vs[3].c_str()));
+                    snprintf(tag, BUFF_SIZE, "%7.2f", shift);
 
-                nmrShift->SetValue(tag);
-                atom->SetData(nmrShift);
+                    nmrShift->SetValue(tag);
+                    atom->SetData(nmrShift);
+                  }
 
                 if (!ifs.getline(buffer, BUFF_SIZE))
                   break;

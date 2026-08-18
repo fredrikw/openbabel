@@ -29,6 +29,8 @@ GNU General Public License for more details.
 #include <openbabel/oberror.h>
 #include <openbabel/elements.h>
 
+#include <set>
+
 using namespace std;
 
 namespace OpenBabel
@@ -318,15 +320,23 @@ namespace OpenBabel
   {
     int i,j;
 
-    //remove identical rings
-    for (i = _rlist.size()-1;i > 0;i--)
-      for (j = i-1;j >= 0;j--)
-        if ((_rlist[i])->_pathset == (_rlist[j])->_pathset)
-          {
-            delete _rlist[i];
-            _rlist.erase(_rlist.begin()+i);
-            break;
-          }
+    // Remove identical rings in O(R log R) via a fingerprint set instead of
+    // the previous O(R^2) bitvec scan (which blew the OSS-Fuzz 60s budget
+    // on densely-fused inputs). Two rings are identical iff their atom-index
+    // sets match; NextBit yields those indices in sorted order.
+    {
+      std::set<std::vector<int> > seen;
+      for (i = (int)_rlist.size() - 1; i >= 0; --i) {
+        std::vector<int> fp;
+        const OBBitVec &bv = _rlist[i]->_pathset;
+        for (int b = bv.NextBit(-1); b >= 0; b = bv.NextBit(b))
+          fp.push_back(b);
+        if (!seen.insert(fp).second) {
+          delete _rlist[i];
+          _rlist.erase(_rlist.begin() + i);
+        }
+      }
+    }
 
     if (_rlist.size() == 0)
       return; // nothing to do
@@ -344,14 +354,30 @@ namespace OpenBabel
       return;
     }
 
-    // exit if we already have frj rings
-    if (_rlist.size() == (unsigned)frj)
+    // Pruning can only remove rings, so once we're at or below frj there's
+    // nothing left to do. (Was '== frj', which let the size-< frj case fall
+    // into an O(R^2 * B/64) loop that found nothing.)
+    if (_rlist.size() <= (unsigned)frj)
       return;
 
-    //make sure tmp is the same size as the rings
+    // create bondsets
+    std::vector<OBBitVec> _bslist;
+    std::vector<unsigned int> bonds;
+    OBBitVec bondset;
+    OBMol *mol = _rlist[0]->GetParent();
+    for (j = 0; j < (signed)_rlist.size(); ++j)
+    {
+      bondset.Clear();
+      bonds = atomRingToBondRing(mol, (_rlist[j])->_path);
+      for (unsigned int i = 0; i < bonds.size(); ++i)
+        bondset.SetBitOn(bonds[i]);
+      _bslist.push_back(bondset);
+    }
+
+    // make sure tmp is the same size as the rings
     OBBitVec tmp;
-    for (j = 0;j < (signed)_rlist.size();++j)
-      tmp = (_rlist[j])->_pathset;
+    for (j = 0; j < (signed)_bslist.size(); ++j)
+      tmp = _bslist[j];
 
     //remove larger rings that cover the same atoms as smaller rings
     for (i = _rlist.size()-1;i >= 0;i--)
@@ -359,15 +385,16 @@ namespace OpenBabel
         tmp.Clear();
         for (j = 0;j < (signed)_rlist.size();++j)
           if ((_rlist[j])->_path.size() <= (_rlist[i])->_path.size() && i != j)
-            tmp |= (_rlist[j])->_pathset;
+          tmp |= _bslist[j];
 
-        tmp = tmp & (_rlist[i])->_pathset;
+      tmp = tmp & _bslist[i];
 
-        if (tmp == (_rlist[i])->_pathset)
-          {
-            delete _rlist[i];
-            _rlist.erase(_rlist.begin()+i);
-          }
+      if (tmp == _bslist[i])
+      {
+        delete _rlist[i];
+        _rlist.erase(_rlist.begin() + i);
+        _bslist.erase(_bslist.begin() + i);
+      }
 
         if (_rlist.size() == (unsigned)frj)
           break;
@@ -446,6 +473,17 @@ namespace OpenBabel
       _rlist[j]->SetParent(&mol);
   }
 
+  struct OBRingSearchPrivate
+  {
+    //! Sorted atom-index fingerprints of every ring already in _rlist.
+    //! Lets SaveUniqueRing dedup in O(log R) instead of an O(R * W)
+    //! bitvec scan, which dominated wall time on densely-fused fuzz inputs.
+    std::set<std::vector<int> > ringfingerprints;
+  };
+
+  OBRingSearch::OBRingSearch() : _d(new OBRingSearchPrivate())
+  {}
+
   bool OBRingSearch::SaveUniqueRing(deque<int> &d1,deque<int> &d2)
   {
     vector<int> path;
@@ -464,10 +502,14 @@ namespace OpenBabel
         path.push_back(*i);
       }
 
-    vector<OBRing*>::iterator j;
-    for (j = _rlist.begin();j != _rlist.end();++j)
-      if (bv == (*j)->_pathset)
-        return(false);
+    // Build a canonical fingerprint from the bitvec's set bits (already
+    // sorted by NextBit) so two rings covering the same atoms hash to
+    // the same key, even when d1/d2 happen to share an atom.
+    std::vector<int> fp;
+    for (int b = bv.NextBit(-1); b >= 0; b = bv.NextBit(b))
+      fp.push_back(b);
+    if (!_d->ringfingerprints.insert(fp).second)
+      return false;
 
     OBRing *ring = new OBRing(path, bv);
     _rlist.push_back(ring);
@@ -496,42 +538,99 @@ namespace OpenBabel
       cout << (*i)->_pathset << endl;
   }
 
-  /* A recursive O(N) traversal of the molecule */
-  static int FindRings(OBAtom *atom, int *avisit, unsigned char *bvisit,
-                       unsigned int &frj, int depth)
+  /* O(N) DFS traversal of the molecule. Uses an explicit heap-allocated
+     stack rather than recursion so deep/long acyclic chains (fuzzed or
+     real, e.g. a 100k-atom polymer) can't overflow the C stack. The
+     algorithm is unchanged: descend on unvisited bonds, recording each
+     atom's depth; treat a bond to an already-visited atom as a ring
+     closure (set Closure + InRing, bump frj); on the way back, propagate
+     the minimum closure depth and mark the atom InRing iff some closure
+     reaches at or above it. */
+  static int FindRings(OBAtom *root, int *avisit, unsigned char *bvisit,
+                       unsigned int &frj, int rootDepth)
   {
-    OBBond *bond;
-    int result = -1;
-    vector<OBBond*>::iterator k;
-    for(bond = atom->BeginBond(k);bond;bond=atom->NextBond(k)) {
-      unsigned int bidx = bond->GetIdx();
-      if (bvisit[bidx] == 0) {
-        bvisit[bidx] = 1;
-        OBAtom *nbor = bond->GetNbrAtom(atom);
-        unsigned int nidx = nbor->GetIdx();
-        int nvisit = avisit[nidx];
-        if (nvisit == 0) {
-          avisit[nidx] = depth+1;
-          nvisit = FindRings(nbor,avisit,bvisit,frj,depth+1);
-          if (nvisit > 0) {
-            if (nvisit <= depth) {
-              bond->SetInRing();
-              if (result < 0 || nvisit < result)
-                result = nvisit;
-            }
-          }
-        } else {
-          if (result < 0 || nvisit < result)
-            result = nvisit;
-          bond->SetClosure();
-          bond->SetInRing();
-          frj++;
-        }
-      }
+    struct Frame {
+      OBAtom *atom;
+      int depth;
+      int result;
+      vector<OBBond*>::iterator it;
+      OBBond *bond; // bond currently being processed (also the one
+                    // awaiting the child's return value when we recurse)
+    };
+
+    std::vector<Frame> stack;
+    stack.reserve(64);
+
+    {
+      Frame f;
+      f.atom = root;
+      f.depth = rootDepth;
+      f.result = -1;
+      f.bond = root->BeginBond(f.it);
+      stack.push_back(f);
     }
-    if (result > 0 && result <= depth)
-      atom->SetInRing();
-    return result;
+
+    int childResult = 0;
+    bool returning = false;
+
+    while (!stack.empty()) {
+      Frame &cur = stack.back();
+
+      if (returning) {
+        // childResult is the recursive call's return value for cur.bond's neighbor
+        returning = false;
+        int nvisit = childResult;
+        if (nvisit > 0 && nvisit <= cur.depth) {
+          cur.bond->SetInRing();
+          if (cur.result < 0 || nvisit < cur.result)
+            cur.result = nvisit;
+        }
+        cur.bond = cur.atom->NextBond(cur.it);
+      }
+
+      bool recursed = false;
+      while (cur.bond) {
+        OBBond *bond = cur.bond;
+        unsigned int bidx = bond->GetIdx();
+        if (bvisit[bidx] == 0) {
+          bvisit[bidx] = 1;
+          OBAtom *nbor = bond->GetNbrAtom(cur.atom);
+          unsigned int nidx = nbor->GetIdx();
+          int nvisit = avisit[nidx];
+          if (nvisit == 0) {
+            avisit[nidx] = cur.depth + 1;
+            Frame nf;
+            nf.atom = nbor;
+            nf.depth = cur.depth + 1;
+            nf.result = -1;
+            nf.bond = nbor->BeginBond(nf.it);
+            // push_back may invalidate `cur`; we don't touch it again before break
+            stack.push_back(nf);
+            recursed = true;
+            break;
+          } else {
+            if (cur.result < 0 || nvisit < cur.result)
+              cur.result = nvisit;
+            bond->SetClosure();
+            bond->SetInRing();
+            frj++;
+          }
+        }
+        cur.bond = cur.atom->NextBond(cur.it);
+      }
+
+      if (recursed)
+        continue;
+
+      // done with this atom's bonds
+      if (cur.result > 0 && cur.result <= cur.depth)
+        cur.atom->SetInRing();
+      childResult = cur.result;
+      returning = true;
+      stack.pop_back();
+    }
+
+    return childResult;
   }
 
   static unsigned int FindRingAtomsAndBonds2(OBMol &mol)

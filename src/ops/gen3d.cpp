@@ -45,7 +45,7 @@ public:
 OpGen3D theOpGen3D("gen3D"); //Global instance
 
 /////////////////////////////////////////////////////////////////
-bool OpGen3D::Do(OBBase* pOb, const char* OptionText, OpMap* pOptions, OBConversion* pConv)
+bool OpGen3D::Do(OBBase* pOb, const char* OptionText, OpMap* /*pOptions*/, OBConversion* /*pConv*/)
 {
   OBMol* pmol = dynamic_cast<OBMol*>(pOb);
   if(!pmol)
@@ -69,6 +69,9 @@ bool OpGen3D::Do(OBBase* pOb, const char* OptionText, OpMap* pOptions, OBConvers
   // 6 is DistanceGeometry
   int speed;
   bool useDistGeom = false;
+
+  if (!OptionText)
+    OptionText = "";
 
   // first try converting OptionText to an integer
   char *endptr;
@@ -109,12 +112,16 @@ bool OpGen3D::Do(OBBase* pOb, const char* OptionText, OpMap* pOptions, OBConvers
     // This is done for all speed levels (i.e., create the structure)
     OBBuilder builder;
     bool attemptBuild = !useDistGeom;
-    if (attemptBuild && !builder.Build(molCopy) ) {
-      std::cerr << "Warning: Stereochemistry is wrong, using the distance geometry method instead" << std::endl;
-      useDistGeom = true;
+    if (attemptBuild) {
+      if (!builder.Build(molCopy) || !molCopy.HasNonZeroCoords()) {
+        std::cerr << "Warning: 3D builder failed, using distance geometry instead" << std::endl;
+        useDistGeom = true; // don't try building anymore
+        attemptBuild = false; // don't use zero/garbage coords as distgeom seed
+        molCopy = *pmol; // reset to original before distgeom
+      }
     }
 
-#ifdef HAVE_EIGEN
+#ifdef HAVE_EIGEN3
     OBDistanceGeometry dg;
     if (useDistGeom) {
       // use the bond lengths and angles if we ran the builder
@@ -163,10 +170,10 @@ bool OpGen3D::Do(OBBase* pOb, const char* OptionText, OpMap* pOptions, OBConvers
     }
 
     // Initial cleanup for every level
-    pFF->ConjugateGradients(iterations, 1.0e-4);
+    pFF->LBFGS(iterations, 1.0e-4);
 
     if (speed == 4) {
-      pFF->UpdateCoordinates(molCopy);
+      pFF->GetCoordinates(molCopy);
       return true; // no conformer searching
     }
 
@@ -183,14 +190,20 @@ bool OpGen3D::Do(OBBase* pOb, const char* OptionText, OpMap* pOptions, OBConvers
     }
 
     // Final cleanup and copy the new coordinates back
-    pFF->ConjugateGradients(iterations, 1.0e-6);
-    pFF->UpdateCoordinates(molCopy);
+    pFF->LBFGS(iterations, 1.0e-6);
+    pFF->GetCoordinates(molCopy);
 
     // Check stereochemistry
     success = stereoHelper.Check(&molCopy);
     if (success) {
       *pmol = molCopy;
       break;
+    }
+    // Builder produced wrong stereo; switch to distance geometry for
+    // remaining trials (molCopy is reset to *pmol at the top of the loop).
+    if (!useDistGeom) {
+      std::cerr << "Warning: Stereochemistry is wrong, using distance geometry instead" << std::endl;
+      useDistGeom = true;
     }
   }
 

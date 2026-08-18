@@ -111,7 +111,7 @@ namespace OpenBabel {
     }
 
     const char* SpecificationURL() override {
-      return "http://cms.mpi.univie.ac.at/vasp/vasp/vasp.html";
+      return "https://www.vasp.at/wiki/index.php/POSCAR";
     }
 
     /* Flags() can return be any of the following combined by |
@@ -123,7 +123,7 @@ namespace OpenBabel {
       return READONEONLY | WRITEONEONLY;
     }
 
-    int SkipObjects(int n, OBConversion* pConv) override
+    int SkipObjects(int /*n*/, OBConversion* /*pConv*/) override
     {
       return 0;
     }
@@ -296,8 +296,16 @@ namespace OpenBabel {
     totalAtoms = 0;
     for (unsigned int i = 0; i < vs.size(); i++) {
       int currentCount = atoi(vs.at(i).c_str());
+      if (currentCount < 0 || currentCount >= 100000000) {
+        pmol->EndModify();
+        return false;
+      }
       numAtoms.push_back(currentCount);
       totalAtoms += currentCount;
+    }
+    if (totalAtoms < 1 || totalAtoms >= 100000000) {
+      pmol->EndModify();
+      return false;
     }
 
     // Do the number of atom types match the number of atom counts?
@@ -346,6 +354,7 @@ namespace OpenBabel {
       // If we made it past that check, we have atomic number = atomTypes.at(atomIndex)
       // Parse the buffer now.
       tokenize(vs, buffer);
+      if (vs.size() < 3) break;
       atom = pmol->NewAtom();
       atom->SetAtomicNum(atomTypes.at(atomIndex));
       x = atof((char*)vs[0].c_str());
@@ -391,10 +400,12 @@ namespace OpenBabel {
       ifs_dos.getline(buffer,BUFF_SIZE); // Junk
 
       // Get fermi level
-      double fermi;
+      double fermi = 0.0;
       if (ifs_dos.getline(buffer,BUFF_SIZE)) { // startE endE res fermi ???
         tokenize(vs, buffer);
-        fermi = atof(vs[3].c_str());
+        if (vs.size() > 3) {
+          fermi = atof(vs[3].c_str());
+        }
       }
 
       // Start pulling out energies and densities
@@ -403,6 +414,7 @@ namespace OpenBabel {
       std::vector<double> integration;
       while (ifs_dos.getline(buffer,BUFF_SIZE)) {
         tokenize(vs, buffer);
+        if (vs.size() < 3) break;
         energies.push_back(atof(vs[0].c_str()));
         densities.push_back(atof(vs[1].c_str()));
         integration.push_back(atof(vs[2].c_str()));
@@ -429,14 +441,18 @@ namespace OpenBabel {
         if (strstr(buffer, "enthalpy is")) {
           hasEnthalpy = true;
           tokenize(vs, buffer);
-          enthalpy_eV = atof(vs[4].c_str());
-          pv_eV = atof(vs[8].c_str());
+          if (vs.size() > 8) {
+            enthalpy_eV = atof(vs[4].c_str());
+            pv_eV = atof(vs[8].c_str());
+          }
         }
 
         // Free energy
         if (strstr(buffer, "free  energy")) {
           tokenize(vs, buffer);
-          pmol->SetEnergy(atof(vs[4].c_str()) * EV_TO_KCAL_PER_MOL);
+          if (vs.size() > 4) {
+            pmol->SetEnergy(atof(vs[4].c_str()) * EV_TO_KCAL_PER_MOL);
+          }
         }
 
         // Frequencies
@@ -450,8 +466,9 @@ namespace OpenBabel {
           while (!strstr(buffer, "Eigenvectors")) {
             vector<vector3> vib;
             tokenize(vs, buffer);
+            if (vs.size() < 8) break;
             int freqnum = atoi(vs[0].c_str());
-            if (vs[1].size() == 1 and vs[1].compare("f") == 0) {
+            if (vs[1].size() == 1 && vs[1].compare("f") == 0) {
               // Real frequency
               Frequencies.push_back(atof(vs[7].c_str()));
             } else if (strstr(vs[1].c_str(), "f/i=")) {
@@ -480,10 +497,12 @@ namespace OpenBabel {
 
         if (strstr(buffer, "dipolmoment")) {
           tokenize(vs, buffer);
-          x = atof(vs[1].c_str());
-          y = atof(vs[2].c_str());
-          z = atof(vs[3].c_str());
-          currDm.Set(x, y, z);
+          if (vs.size() > 3) {
+            x = atof(vs[1].c_str());
+            y = atof(vs[2].c_str());
+            z = atof(vs[3].c_str());
+            currDm.Set(x, y, z);
+          }
         }
         if (strstr(buffer, "TOTAL-FORCE")) {
           currXyz.clear();
@@ -510,6 +529,7 @@ namespace OpenBabel {
             for (int row = 0; row < 3; ++row) {
               ifs_out.getline(buffer, BUFF_SIZE);
               tokenize(vs, buffer);
+              if (vs.size() < 4) break;
               x = atof(vs[1].c_str());
               y = atof(vs[2].c_str());
               z = atof(vs[3].c_str());

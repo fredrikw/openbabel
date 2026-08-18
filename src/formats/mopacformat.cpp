@@ -83,7 +83,7 @@ namespace OpenBabel
     vector<string> vs;
     vector<double> charges;
     bool hasPartialCharges = false;
-    double energy;
+    double energy = 0.0;
     OBVectorData *dipoleMoment = nullptr;
     bool readingVibrations = false;
     vector< vector<vector3> > displacements; // vibrational displacements
@@ -167,7 +167,8 @@ namespace OpenBabel
                 y = atof((char*)vs[3].c_str());
                 z = atof((char*)vs[4].c_str());
 
-                translationVectors[numTranslationVectors++].Set(x, y, z);
+                if (numTranslationVectors < 3)
+                  translationVectors[numTranslationVectors++].Set(x, y, z);
                 if (!ifs.getline(buffer,BUFF_SIZE))
                   break;
                 tokenize(vs,buffer);
@@ -212,7 +213,7 @@ namespace OpenBabel
                   break;
                 }
 
-                if (isZ)
+                if (isZ && numTranslationVectors < 3)
                   translationVectors[numTranslationVectors++].Set(x, y, z);
 
                 if (!ifs.getline(buffer,BUFF_SIZE))
@@ -296,8 +297,8 @@ namespace OpenBabel
           }
         else if (strstr(buffer, "FINAL HEAT") != nullptr)
           {
-            sscanf(buffer,"%*s%*s%*s%*s%*s%lf",&energy);
-            mol.SetEnergy(energy);
+            if (sscanf(buffer,"%*s%*s%*s%*s%*s%lf",&energy) == 1)
+              mol.SetEnergy(energy);
           }
         else if (strstr(buffer, "ELECTROSTATIC POTENTIAL CHARGES") != nullptr)
           {
@@ -387,7 +388,13 @@ namespace OpenBabel
 
             // now real work
             unsigned int prevModeCount = displacements.size();
-            unsigned int newModes = frequencies.size() - displacements.size();
+            // Guard against unsigned underflow on malformed input: if there are
+            // fewer frequencies than displacements already stored, the
+            // subtraction would wrap to a huge value and the loop below would
+            // exhaust memory.
+            unsigned int newModes = 0;
+            if (frequencies.size() > displacements.size())
+              newModes = frequencies.size() - displacements.size();
             vector<vector3> displacement;
             for (unsigned int i = 0; i < newModes; ++i) {
               displacements.push_back(displacement);
@@ -683,8 +690,10 @@ namespace OpenBabel
             atomLabel = vs[1];
             strcpy(buffer,vs[2].c_str());
           }
-        else //no label, reset buffer
+        else if (vs.size() == 1) //no label, reset buffer
           strcpy(buffer,vs[0].c_str());
+        else //blank line (e.g. only '(' or ')' characters): no more data
+          break;
 
         //Now parse the rest of the line
         //There should be three cases:
@@ -726,7 +735,8 @@ namespace OpenBabel
 
         if (elementSymbol == "Tv") //MOPAC translation vector
           {
-            translationVectors[numTranslationVectors++].Set(x, y, z);
+            if (numTranslationVectors < 3)
+              translationVectors[numTranslationVectors++].Set(x, y, z);
           }
         else
           {

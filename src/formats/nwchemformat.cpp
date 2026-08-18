@@ -58,7 +58,7 @@ namespace OpenBabel
     }
 
     const char* SpecificationURL() override
-    { return "http://www.emsl.pnl.gov/docs/nwchem/"; }  // optional
+    { return "https://nwchemgit.github.io/index.html"; }
 
     //Flags() can return be any the following combined by | or be omitted if none apply
     // NOTREADABLE  READONEONLY  NOTWRITABLE  WRITEONEONLY
@@ -145,7 +145,7 @@ static const char* OPTIMIZATION_END_PATTERN = "  Optimization converged";
     }
 
     const char* SpecificationURL() override
-    { return "http://www.emsl.pnl.gov/docs/nwchem/"; }  // optional
+    { return "https://nwchemgit.github.io/index.html"; }
 
     //Flags() can return be any the following combined by | or be omitted if none apply
     // NOTREADABLE  READONEONLY  NOTWRITABLE  WRITEONEONLY
@@ -217,9 +217,15 @@ static const char* OPTIMIZATION_END_PATTERN = "  Optimization converged";
         z = atof((char*)vs[5].c_str());
         if (from_scratch)
         {
-            // set atomic number
+            // set atomic number. Clamp to a valid element range: an
+            // out-of-range value would be truncated to a byte by SetAtomicNum
+            // and silently become the wrong element.
             OBAtom* atom = molecule->NewAtom();
-            atom->SetAtomicNum(atoi(vs[2].c_str()));
+            int atomicNum = atoi(vs[2].c_str());
+            if (atomicNum < 1 ||
+                atomicNum > static_cast<int>(OBElements::Oganesson))
+              atomicNum = 0;
+            atom->SetAtomicNum(atomicNum);
             atom->SetVector(x,y,z);
         }
         else
@@ -318,8 +324,8 @@ static const char* OPTIMIZATION_END_PATTERN = "  Optimization converged";
                 else if (vs[k+1][0] == '1')
                     i[j++] = k;
             }
-            quadrupole.Set(i[0], i[1], value);
-            quadrupole.Set(i[1], i[0], value);
+            quadrupole(i[0], i[1]) = value;
+            quadrupole(i[1], i[0]) = value;
         }
         else
             return;
@@ -756,7 +762,9 @@ static const char* OPTIMIZATION_END_PATTERN = "  Optimization converged";
         if (strstr(buffer, DFT_ENERGY_PATTERN) != nullptr || strstr(buffer, SCF_ENERGY_PATTERN) != nullptr)
         {
             tokenize(vs, buffer);
-            energy = atof(vs[4].c_str()) * HARTREE_TO_KCAL;
+            if (vs.size() > 4) {
+                energy = atof(vs[4].c_str()) * HARTREE_TO_KCAL;
+            }
         }
         else if (strstr(buffer, ORBITAL_SECTION_PATTERN_2) != nullptr && strstr(buffer, ORBITAL_SECTION_PATTERN_1) != nullptr)
             ReadOrbitals(ifs, molecule);

@@ -82,7 +82,7 @@ namespace OpenBabel
   ReactionInChIFormat theReactionInChIFormat;
 
   /////////////////////////////////////////////////////////////////
-  bool ReactionInChIFormat::ReadMolecule(OBBase* pOb, OBConversion* pConv)
+  bool ReactionInChIFormat::ReadMolecule(OBBase* /*pOb*/, OBConversion* /*pConv*/)
   {
     return true;
   }
@@ -144,7 +144,7 @@ namespace OpenBabel
         case M_PRODUCTS: facade.GetComponent(&mol, PRODUCT, i); break;
         case M_AGENTS: facade.GetComponent(&mol, AGENT, i); break;
         }
-        if (mol.NumAtoms() == 1 && mol.GetFirstAtom()->GetAtomicNum() == 0) {
+        if (mol.NumAtoms() == 1 && mol.GetAtom(1)->GetAtomicNum() == 0) {
           // This represents an unknown component
           nonInchi[part]++;
           hasNonInchi = true;

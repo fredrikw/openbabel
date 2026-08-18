@@ -46,8 +46,9 @@ namespace OpenBabel
           "Open source molecular modelling\n";
       }
 
-      const char* SpecificationURL() override
-      { return "http://www.uku.fi/~thassine/ghemical/"; } //optional
+      const char* SpecificationURL() override {
+        return "http://www.uku.fi/~thassine/ghemical/"; // XXX dead
+      }
 
       //Flags() can return be any the following combined by | or be omitted if none apply
       // NOTREADABLE  READONEONLY  NOTWRITABLE  WRITEONEONLY
@@ -81,7 +82,7 @@ namespace OpenBabel
     const char* title = pConv->GetTitle();
 
     int i;
-    int natoms, nbonds;
+    int natoms = 0, nbonds = 0;
     char buffer[BUFF_SIZE];
     string str,str1;
     double x,y,z;
@@ -109,7 +110,7 @@ namespace OpenBabel
     // Get !Atoms line with number
     ifs.getline(buffer,BUFF_SIZE);
     sscanf(buffer,"%*s %d", &natoms);
-    if (!natoms)
+    if (natoms < 1 || natoms >= 100000000)
       return(false);
 
     for (i = 1; i <= natoms; i ++)
@@ -126,12 +127,18 @@ namespace OpenBabel
     // Get !Bonds line with number
     ifs.getline(buffer,BUFF_SIZE);
     sscanf(buffer,"%*s %d", &nbonds);
+    if (nbonds < 0 || nbonds >= 100000000)
+      return(false);
     if (nbonds != 0)
       for (i = 0; i < nbonds; i++)
       {
         if (!ifs.getline(buffer,BUFF_SIZE))
           return(false);
-        if (!sscanf(buffer,"%d%d%2s",&bgn,&end,bobuf))
+        // The two atom indices are required; the bond-order code is optional
+        // and defaults to a single bond, so clear bobuf rather than reading a
+        // stale value left over from a previous bond.
+        bobuf[0] = '\0';
+        if (sscanf(buffer,"%d%d%2s",&bgn,&end,bobuf) < 2)
           return (false);
         bostr = bobuf;
         order = 1;
@@ -279,7 +286,7 @@ namespace OpenBabel
         << atom->GetPartialCharge() << '\n';
     }
 
-    OBSetData *gmsset = (OBSetData *)pmol->GetData("gamess");
+    OBSetData *gmsset = dynamic_cast<OBSetData *>(pmol->GetData("gamess"));
     if(gmsset)
     {
       ofs << "!GAMESS" << endl;
@@ -287,13 +294,13 @@ namespace OpenBabel
 
       for(i = gmsset->GetBegin(); i != gmsset->GetEnd(); ++i)
       {
-        OBSetData *cset = (OBSetData *)(*i);
+        OBSetData *cset = dynamic_cast<OBSetData *>(*i);
         if(cset)
         {
           string section = cset->GetAttribute();
           for(j = cset->GetBegin(); j != cset->GetEnd(); ++j)
           {
-            OBPairData *pd = (OBPairData *) (*j);
+            OBPairData *pd = dynamic_cast<OBPairData *>(*j);
             if(pd)
             {
               ofs << section << " " << pd->GetAttribute() << " " << pd->GetValue() << endl;

@@ -46,7 +46,7 @@ namespace OpenBabel {
     }
 
     const char* SpecificationURL() override {
-      return "http://www.quantum-espresso.org";
+      return "https://www.quantum-espresso.org/";
     }
 
     /* Flags() can return be any of the following combined by |
@@ -58,7 +58,7 @@ namespace OpenBabel {
       return READONEONLY | NOTWRITABLE;
     }
 
-    int SkipObjects(int n, OBConversion* pConv) override
+    int SkipObjects(int /*n*/, OBConversion* /*pConv*/) override
     {
       return 0;
     }
@@ -124,11 +124,13 @@ namespace OpenBabel {
         double conv = 1.0;
         tokenize(vs, buffer);
 
-        if (strstr(vs[1].c_str(), "alat")) {
-          conv = alat * BOHR_TO_ANGSTROM;
-        }
-        else if (strstr(vs[1].c_str(), "bohr")) {
-          conv = BOHR_TO_ANGSTROM;
+        if (vs.size() > 1) {
+          if (strstr(vs[1].c_str(), "alat")) {
+            conv = alat * BOHR_TO_ANGSTROM;
+          }
+          else if (strstr(vs[1].c_str(), "bohr")) {
+            conv = BOHR_TO_ANGSTROM;
+          }
         }
         // Add others if needed
 
@@ -206,12 +208,14 @@ namespace OpenBabel {
         matrix3x3 conv (1);
         tokenize(vs, buffer);
 
-        if (strstr(vs[1].c_str(), "alat")) {
-          conv *= (alat * BOHR_TO_ANGSTROM);
-        }
-        else if (strstr(vs[1].c_str(), "crystal")) {
-          // Set to the zero matrix and test below.
-          conv = matrix3x3 (0.0);
+        if (vs.size() > 1) {
+          if (strstr(vs[1].c_str(), "alat")) {
+            conv *= (alat * BOHR_TO_ANGSTROM);
+          }
+          else if (strstr(vs[1].c_str(), "crystal")) {
+            // Set to the zero matrix and test below.
+            conv = matrix3x3 (0.0);
+          }
         }
         // Add others if needed
 
@@ -245,13 +249,17 @@ namespace OpenBabel {
       // Free energy
       if (strstr(buffer, "Final energy =")) {
         tokenize(vs, buffer);
-        pmol->SetEnergy(atof(vs[3].c_str()) * RYDBERG_TO_KCAL_PER_MOL);
+        if (vs.size() > 3) {
+          pmol->SetEnergy(atof(vs[3].c_str()) * RYDBERG_TO_KCAL_PER_MOL);
+        }
       }
 
       // H - PV = U energy
       if (strstr(buffer, "!    total energy              =")) {
         tokenize(vs, buffer);
-        pmol->SetEnergy(atof(vs[4].c_str()) * RYDBERG_TO_KCAL_PER_MOL);
+        if (vs.size() > 4) {
+          pmol->SetEnergy(atof(vs[4].c_str()) * RYDBERG_TO_KCAL_PER_MOL);
+        }
       }
 
       // Enthalphy

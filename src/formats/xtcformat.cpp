@@ -26,17 +26,12 @@
 #include <rpc/types.h>
 #endif
 #include <rpc/xdr.h>
+#include <algorithm>
 #include <vector>
 
 #define MAXID 20
 #define MAXABS INT_MAX-2
 
-#ifndef MIN
-#define MIN(x,y) ((x) < (y) ? (x):(y))
-#endif
-#ifndef MAX
-#define MAX(x,y) ((x) > (y) ? (x):(y))
-#endif
 #ifndef SQR
 #define SQR(x) ((x)*(x))
 #endif
@@ -86,7 +81,7 @@ namespace OpenBabel
 
     const char* SpecificationURL() override
     {
-      return "http://manual.gromacs.org/documentation/current/reference-manual/file-formats.html#xtc";
+      return "https://manual.gromacs.org/documentation/current/reference-manual/file-formats.html#xtc";
     }
 
     //Flags() can return be any the following combined by | or be omitted if none apply
@@ -778,9 +773,9 @@ namespace OpenBabel
         smallidx++;
       }
       xdr_int(xdrs, &smallidx);
-      maxidx = MIN(LASTIDX, smallidx + 8) ;
+      maxidx = std::min<int>(LASTIDX, smallidx + 8) ;
       minidx = maxidx - 8; /* often this equal smallidx */
-      smaller = magicints[MAX(FIRSTIDX, smallidx-1)] / 2;
+      smaller = magicints[std::max(FIRSTIDX, smallidx-1)] / 2;
       small_ = magicints[smallidx] / 2;
       sizesmall[0] = sizesmall[1] = sizesmall[2] = magicints[smallidx];
       larger = magicints[maxidx] / 2;
@@ -954,9 +949,9 @@ namespace OpenBabel
       }
 
       xdr_int(xdrs, &smallidx);
-      maxidx = MIN(LASTIDX, smallidx + 8) ;
+      maxidx = std::min<int>(LASTIDX, smallidx + 8) ;
       minidx = maxidx - 8; /* often this equal smallidx */
-      smaller = magicints[MAX(FIRSTIDX, smallidx-1)] / 2;
+      smaller = magicints[std::max(FIRSTIDX, smallidx-1)] / 2;
       small_ = magicints[smallidx] / 2;
       sizesmall[0] = sizesmall[1] = sizesmall[2] = magicints[smallidx] ;
       larger = magicints[maxidx];

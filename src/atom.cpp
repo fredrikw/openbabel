@@ -806,6 +806,8 @@ namespace OpenBabel
   bool OBAtom::IsPeriodic() const
   {
     OBMol *mol = (OBMol*)((OBAtom*)this)->GetParent();
+    if (mol == nullptr)
+      return false;
     return mol->IsPeriodic();
   }
 
@@ -823,7 +825,7 @@ namespace OpenBabel
 
     rlist = mol->GetSSSR();
     for (i = rlist.begin();i != rlist.end();++i)
-      if ((*i)->IsInRing(GetIdx()) && static_cast<int>((*i)->PathSize()) == size)
+      if ((*i)->IsInRing(GetIdx()) && static_cast<int>((*i)->Size()) == size)
         return(true);
 
     return(false);
@@ -1140,8 +1142,8 @@ namespace OpenBabel
         v2 = box->MinimumImageCartesian(v2);
       }
 
-    if (IsNearZero(v1.length(), 1.0e-3)
-      || IsNearZero(v2.length(), 1.0e-3)) {
+    if (fabs(v1.length()) < 1.0e-3
+      || fabs(v2.length()) < 1.0e-3) {
         return(0.0);
     }
 

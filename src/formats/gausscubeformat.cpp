@@ -24,6 +24,7 @@ GNU General Public License for more details.
 
 #include <sstream>
 #include <cstdlib>
+#include <limits>
 
 #include <openbabel/babelconfig.h>
 #include <openbabel/obmolecformat.h>
@@ -76,14 +77,14 @@ namespace OpenBabel
     // I couldn't find it but close enough.
     const char* SpecificationURL() override
     {
-        return "https://www.gaussian.com/cubegen/";
+        return "https://gaussian.com/cubegen/";
     }
 
     // Return MIME type, NULL in this case.
     const char* GetMIMEType() override { return nullptr; }
 
     // Skip to object: used for multi-object file formats.
-    int SkipObjects(int n, OpenBabel::OBConversion* pConv) override { return 0; }
+    int SkipObjects(int /*n*/, OpenBabel::OBConversion* /*pConv*/) override { return 0; }
 
     unsigned int Flags() override
     {
@@ -474,9 +475,36 @@ bool OBGaussianCubeFormat::ReadMolecule( OBBase* pOb, OBConversion* pConv )
 
     // get all values as one vector<double>
     vector<double> values;
-    int n = voxels[0]*voxels[1]*voxels[2];
-    values.reserve(n*nCubes);
-    while (values.size() < n*nCubes)
+    // Validate the grid dimensions and compute the total number of values
+    // using 64-bit arithmetic with explicit overflow checks. A corrupt or
+    // malicious header (e.g. nx*ny*nz exceeding INT_MAX) previously caused
+    // signed integer overflow (undefined behavior) and a bogus reserve().
+    if (voxels[0] <= 0 || voxels[1] <= 0 || voxels[2] <= 0 || nCubes <= 0)
+    {
+      obErrorLog.ThrowError(__FUNCTION__,
+        "Problem reading the Gaussian cube file: non-positive voxel or cube count.",
+        obError);
+      return false;
+    }
+    unsigned long long total = 1ULL;
+    const unsigned long long maxTotal =
+      std::numeric_limits<unsigned long long>::max();
+    for (int factor : {voxels[0], voxels[1], voxels[2], nCubes})
+    {
+      if (total > maxTotal / static_cast<unsigned long long>(factor))
+      {
+        obErrorLog.ThrowError(__FUNCTION__,
+          "Problem reading the Gaussian cube file: voxel/cube count too large.",
+          obError);
+        return false;
+      }
+      total *= static_cast<unsigned long long>(factor);
+    }
+    // Only pre-reserve a sane amount; the read loop below stops when the file
+    // runs out of data, so an inflated header cannot force a huge allocation.
+    const unsigned long long reserveCap = 1ULL << 27; // ~134M doubles (~1 GB)
+    values.reserve(static_cast<size_t>(total < reserveCap ? total : reserveCap));
+    while (values.size() < total)
     {
       // Read in values until we have a complete row of data
       ++line;
@@ -487,7 +515,7 @@ bool OBGaussianCubeFormat::ReadMolecule( OBBase* pOb, OBConversion* pConv )
                  << " of the file. More data was expected.\n"
                  << "Values read in = " << values.size()
                  << " and expected number of values = "
-                 << n*nCubes << endl;
+                 << total << endl;
         obErrorLog.ThrowError(__FUNCTION__, errorMsg.str(), obError);
         return false;
       }
@@ -583,14 +611,14 @@ bool OBGaussianCubeFormat::ReadMolecule( OBBase* pOb, OBConversion* pConv )
     }
 
     int nx, ny, nz;
-    double origin[3], xAxis[3], yAxis[3], zAxis[3];
+    double xAxis[3], yAxis[3], zAxis[3];
     gd->GetAxes(xAxis, yAxis, zAxis);
     gd->GetNumberOfPoints(nx, ny, nz);
-    gd->GetOriginVector(origin);
+    vector3 origin = gd->GetOriginVector();
 
     // line 3: number of atoms, origin x y z
     snprintf(buffer, BUFF_SIZE,"%5d%12.6f%12.6f%12.6f", - static_cast<signed int> (mol.NumAtoms()),
-        origin[0]*ANGSTROM_TO_BOHR, origin[1]*ANGSTROM_TO_BOHR, origin[2]*ANGSTROM_TO_BOHR);
+        origin.x()*ANGSTROM_TO_BOHR, origin.y()*ANGSTROM_TO_BOHR, origin.z()*ANGSTROM_TO_BOHR);
     ofs << buffer << endl;
 
     // line 4: number of points x direction, axis x direction x y z

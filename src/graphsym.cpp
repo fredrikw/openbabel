@@ -312,14 +312,23 @@ namespace OpenBabel {
       //    vid[i] = 0;
       vid[i] = OBGraphSym::NoSymmetryClass;
       if (_frag_atoms.BitIsSet(atom->GetIdx())) {
-        vid[i] =
-          v[i]                                                    // 10 bits: graph-theoretical distance
-          | (GetHvyDegree(atom)                <<10)  //  4 bits: heavy valence
-          | (((atom->IsAromatic()) ? 1 : 0)                <<14)  //  1 bit:  aromaticity
-          | (((ring_atoms.BitIsSet(atom->GetIdx())) ? 1 : 0)<<15)  //  1 bit:  ring atom
-          | (atom->GetAtomicNum()                          <<16)  //  7 bits: atomic number
-          | (GetHvyBondSum(atom)               <<23)  //  4 bits: heavy bond sum
-          | ((7 + atom->GetFormalCharge())                 <<27); //  4 bits: formal charge
+        // Mask each field to its bit width so a pathological input (e.g.
+        // formal charge outside -7..+8, or Z > 127) cannot bleed into the
+        // next field or trigger UB from a left shift overflowing int.
+        unsigned int dist    = static_cast<unsigned int>(v[i]) & 0x3FFu;       // 10 bits
+        unsigned int hvyDeg  = GetHvyDegree(atom)              & 0xFu;        //  4 bits
+        unsigned int aro     = atom->IsAromatic() ? 1u : 0u;                  //  1 bit
+        unsigned int ring    = ring_atoms.BitIsSet(atom->GetIdx()) ? 1u : 0u; //  1 bit
+        unsigned int z       = atom->GetAtomicNum()            & 0x7Fu;       //  7 bits
+        unsigned int hvyBond = GetHvyBondSum(atom)             & 0xFu;        //  4 bits
+        unsigned int charge  = static_cast<unsigned int>(7 + atom->GetFormalCharge()) & 0xFu; // 4 bits
+        vid[i] = dist
+               | (hvyDeg  << 10)
+               | (aro     << 14)
+               | (ring    << 15)
+               | (z       << 16)
+               | (hvyBond << 23)
+               | (charge  << 27);
       }
       i++;
     }
@@ -345,7 +354,7 @@ namespace OpenBabel {
   void OBGraphSymPrivate::CreateNewClassVector(std::vector<std::pair<OBAtom*,unsigned int> > &vp1,
                                         std::vector<std::pair<OBAtom*,unsigned int> > &vp2)
   {
-    int m,id;
+    unsigned int m,id;
     OBAtom *atom, *nbr;
     vector<OBBond*>::iterator nbr_iter;
     vector<unsigned int>::iterator k;
@@ -386,8 +395,20 @@ namespace OpenBabel {
       }
 
       sort(vtmp.begin(),vtmp.end(),CompareUnsigned);
-      for (m = 100, k = vtmp.begin(); k != vtmp.end(); ++k, m*=100)
-        id += *k * m;
+      // Combine this atom's class with its sorted neighbour classes as base-100
+      // "digits": id + n0*100 + n1*100^2 + ... This deliberately wraps modulo
+      // 2^32 for high-degree atoms (the base-100 packing overflows past ~4
+      // neighbours), and the wrapped value is part of the established canonical
+      // ordering, so it must be preserved bit-for-bit. Do the multiply/add in
+      // 64-bit and truncate back to 32-bit: identical result to the old
+      // uint32 overflow, but without tripping the sanitizer. Operands stay
+      // below 2^32 (neighbour classes are small renumbered ids), so the 64-bit
+      // math itself never overflows.
+      m = 100;
+      for (k = vtmp.begin(); k != vtmp.end(); ++k) {
+        id = static_cast<unsigned int>(id + static_cast<unsigned long long>(*k) * m);
+        m  = static_cast<unsigned int>(static_cast<unsigned long long>(m) * 100);
+      }
       vp2.push_back(pair<OBAtom*,unsigned int> (atom, id));
     }
 #if DEBUG2
@@ -399,7 +420,7 @@ namespace OpenBabel {
   void OBGraphSymPrivate::CreateNewClassVector(OBMol *mol, std::vector<std::pair<OBAtom*,unsigned int> > &vp1,
       std::vector<std::pair<OBAtom*,unsigned int> > &vp2)
   {
-    int m,id;
+    unsigned int m,id;
     OBAtom *atom, *nbr;
     vector<OBBond*>::iterator nbr_iter;
     vector<unsigned int>::iterator k;
@@ -439,8 +460,14 @@ namespace OpenBabel {
       }
 
       sort(vtmp.begin(),vtmp.end(),CompareUnsigned);
-      for (m = 100, k = vtmp.begin(); k != vtmp.end(); ++k, m*=100)
-        id += *k * m;
+      // See the sibling overload above: the base-100 positional sum is
+      // computed modulo 2^32 (bit-identical to the old overflow) via 64-bit
+      // intermediates, so it never trips the sanitizer.
+      m = 100;
+      for (k = vtmp.begin(); k != vtmp.end(); ++k) {
+        id = static_cast<unsigned int>(id + static_cast<unsigned long long>(*k) * m);
+        m  = static_cast<unsigned int>(static_cast<unsigned long long>(m) * 100);
+      }
       vp2.push_back(pair<OBAtom*,unsigned int> (atom, id));
     }
 #if DEBUG2

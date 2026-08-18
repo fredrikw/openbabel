@@ -42,8 +42,8 @@ public:
       " b  Disable bonding entirely\n\n";
   }
 
-  const char* SpecificationURL() override  // optional
-  { return "http://viewmol.sourceforge.net/"; }
+  const char* SpecificationURL() override
+  { return "https://viewmol.sourceforge.net/"; }
 
     //Flags() can return be any the following combined by | or be omitted if none apply
     // NOTREADABLE  READONEONLY  NOTWRITABLE  WRITEONEONLY
@@ -126,7 +126,12 @@ bool ViewMolFormat::ReadMolecule(OBBase* pOb, OBConversion* pConv)
             {
                 if (buffer[0] == '$')
                     break;
-                sscanf(buffer,"%d %d %lf",&bgn,&end, &border);
+                // Both atom indices are required; the bond order is optional
+                // (defaults to single). Skip a line missing the indices rather
+                // than adding a bond from stale values.
+                border = 0.0;
+                if (sscanf(buffer,"%d %d %lf",&bgn,&end, &border) < 2)
+                    continue;
                 if (border > 1.0)
                     order = int(border);
                 else

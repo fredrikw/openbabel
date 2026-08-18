@@ -57,7 +57,7 @@ namespace OpenBabel
     }
 
     const char* SpecificationURL() override
-    { return "https://www.gaussian.com/zmat/"; }
+    { return "https://gaussian.com/zmat/"; }
 
     const char* GetMIMEType() override
     { return "chemical/x-gaussian-input"; }
@@ -234,6 +234,9 @@ namespace OpenBabel
 
     // file should end with a blank line
     ofs << "\n";
+
+    for (auto* p : vic)
+      delete p;
     return(true);
   }
 
@@ -254,8 +257,12 @@ namespace OpenBabel
     char buffer[BUFF_SIZE];
 
     OBAtom *atom;
-		vector<OBInternalCoord*> vic;
-	  vic.push_back(nullptr); // OBMol indexed from 1 -- potential atom index problem
+    vector<OBInternalCoord*> vic;
+    vic.push_back(nullptr); // OBMol indexed from 1 -- potential atom index problem
+    auto cleanVic = [&vic]() {
+      for (auto* p : vic)
+        delete p;
+    };
 
     vector<string> vs;
     int charge = 0;
@@ -325,6 +332,7 @@ namespace OpenBabel
       for (i = 0; i < atomLines.size(); ++i) {
         j = i+1;
         tokenize(vs, atomLines[i]);
+        if (vs.empty()) continue;
         atom = mol.NewAtom();
         atom->SetAtomicNum(OBElements::GetAtomicNum(vs[0].c_str()));
 
@@ -333,7 +341,7 @@ namespace OpenBabel
         }
 
         if (j >= 2) {
-          if (vs.size() < 3) {return false;}
+          if (vs.size() < 3) {cleanVic(); return false;}
           vic[j]->_a = mol.GetAtom(atoi(vs[1].c_str()));
 
           temp = strtod((char*)vs[2].c_str(), &endptr);
@@ -344,7 +352,7 @@ namespace OpenBabel
         }
 
         if (j >= 3) {
-          if (vs.size() < 5) {return false;}
+          if (vs.size() < 5) {cleanVic(); return false;}
           vic[j]->_b = mol.GetAtom(atoi(vs[3].c_str()));
 
           temp = strtod((char*)vs[4].c_str(), &endptr);
@@ -355,7 +363,7 @@ namespace OpenBabel
         }
 
         if (j >= 4) {
-          if (vs.size() < 7) {return false;}
+          if (vs.size() < 7) {cleanVic(); return false;}
           vic[j]->_c = mol.GetAtom(atoi(vs[5].c_str()));
 
           temp = strtod((char*)vs[6].c_str(), &endptr);
@@ -374,6 +382,7 @@ namespace OpenBabel
 
     if (mol.NumAtoms() == 0) { // e.g., if we're at the end of a file PR#1737209
       mol.EndModify();
+      cleanVic();
       return false;
     }
 
@@ -390,6 +399,7 @@ namespace OpenBabel
     mol.SetTotalSpinMultiplicity(spin);
 
     mol.SetTitle(title);
+    cleanVic();
     return(true);
   }
 

@@ -28,6 +28,7 @@ GNU General Public License for more details.
 #include <openbabel/obutil.h>
 
 #include <cstdlib>
+#include <memory>
 
 using namespace std;
 
@@ -341,7 +342,7 @@ namespace OpenBabel
       rab = OBForceField::VectorDistance(pos_a, pos_b);
     }
 
-    if (IsNearZero(rab, 1.0e-3))
+    if (fabs(rab) < 1.0e-3)
       rab = 1.0e-3;
 
     energy = qq / rab;
@@ -506,6 +507,9 @@ namespace OpenBabel
       b = _mol.GetAtom((*angle)[0] + 1);
       a = _mol.GetAtom((*angle)[1] + 1);
       c = _mol.GetAtom((*angle)[2] + 1);
+      // Cached AngleData can reference indices that no longer exist.
+      if (a == nullptr || b == nullptr || c == nullptr)
+        continue;
 
       // skip this angle if the atoms are ignored
       if ( _constraints.IsIgnored(a->GetIdx()) || _constraints.IsIgnored(b->GetIdx()) || _constraints.IsIgnored(c->GetIdx()) )
@@ -575,6 +579,9 @@ namespace OpenBabel
       b = _mol.GetAtom((*t)[1] + 1);
       c = _mol.GetAtom((*t)[2] + 1);
       d = _mol.GetAtom((*t)[3] + 1);
+      // Cached TorsionData can reference indices that no longer exist.
+      if (a == nullptr || b == nullptr || c == nullptr || d == nullptr)
+        continue;
 
       // skip this torsion if the atoms are ignored
       if ( _constraints.IsIgnored(a->GetIdx()) || _constraints.IsIgnored(b->GetIdx()) ||
@@ -594,6 +601,8 @@ namespace OpenBabel
       }
 
       OBBond *bc = _mol.GetBond(b, c);
+      if (bc == nullptr)
+        continue;
       torsiontype = bc->GetBondOrder();
       if (bc->IsAromatic())
         torsiontype = 5;
@@ -954,10 +963,8 @@ namespace OpenBabel
   bool OBForceFieldGhemical::SetTypes()
   {
     vector<vector<int> > _mlist; //!< match list for atom typing
-    vector<pair<OBSmartsPattern*,string> > _vexttyp; //!< external atom type rules
+    vector<pair<std::unique_ptr<OBSmartsPattern>, string>> _vexttyp; //!< external atom type rules
     vector<vector<int> >::iterator j;
-    vector<pair<OBSmartsPattern*,string> >::iterator i;
-    OBSmartsPattern *sp;
     vector<string> vs;
     char buffer[80];
 
@@ -977,19 +984,17 @@ namespace OpenBabel
       if (EQn(buffer, "atom", 4)) {
       	tokenize(vs, buffer);
 
-        sp = new OBSmartsPattern;
+        auto sp = std::unique_ptr<OBSmartsPattern>(new OBSmartsPattern);
         if (sp->Init(vs[1]))
-          _vexttyp.push_back(pair<OBSmartsPattern*,string> (sp,vs[2]));
+          _vexttyp.emplace_back(std::move(sp), vs[2]);
         else {
-          delete sp;
-          sp = nullptr;
           obErrorLog.ThrowError(__FUNCTION__, " Could not parse atom type table from ghemical.prm", obInfo);
           return false;
         }
       }
     }
 
-    for (i = _vexttyp.begin();i != _vexttyp.end();++i) {
+    for (auto i = _vexttyp.begin(); i != _vexttyp.end(); ++i) {
       if (i->first->Match(_mol)) {
         _mlist = i->first->GetMapList();
         for (j = _mlist.begin();j != _mlist.end();++j) {

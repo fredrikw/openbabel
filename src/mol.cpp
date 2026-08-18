@@ -188,9 +188,11 @@ namespace OpenBabel
     //Only multiline titles use the following to replace newlines by spaces
     static string title;
     title=_title;
-    string::size_type j;
-    for ( ; (j = title.find_first_of( "\n\r" )) != string::npos ; ) {
-      title.replace( j, 1, " ");
+    // Single pass; previous implementation was O(n^2) on titles with many
+    // newlines because find_first_of always restarted from position 0.
+    for (char& c : title) {
+      if (c == '\n' || c == '\r')
+        c = ' ';
     }
 
     return(title.c_str());
@@ -743,7 +745,7 @@ namespace OpenBabel
   //! helper routine to GetGIDVector
   static void CreateNewClassVector(vector<pair<OBAtom*,unsigned int> > &vp1,vector<pair<OBAtom*,unsigned int> > &vp2)
   {
-    int m,id;
+    unsigned int m,id;
     OBAtom *nbr;
     vector<OBBond*>::iterator j;
     vector<unsigned int>::iterator k;
@@ -756,8 +758,16 @@ namespace OpenBabel
         for (nbr = i->first->BeginNbrAtom(j);nbr;nbr = i->first->NextNbrAtom(j))
           vtmp.push_back(vp1[nbr->GetIdx()-1].second);
         sort(vtmp.begin(),vtmp.end(),OBCompareUnsigned);
-        for (id=i->second,m=100,k = vtmp.begin();k != vtmp.end();++k,m*=100)
-          id += *k * m;
+        // Base-100 positional sum of the neighbour classes, computed modulo
+        // 2^32 (bit-identical to the previous int overflow, but done in 64-bit
+        // intermediates so it does not invoke overflow). See the matching
+        // routine in graphsym.cpp for details.
+        id = i->second;
+        for (m=100,k = vtmp.begin();k != vtmp.end();++k)
+          {
+            id = static_cast<unsigned int>(id + static_cast<unsigned long long>(*k) * m);
+            m  = static_cast<unsigned int>(static_cast<unsigned long long>(m) * 100);
+          }
 
         vp2.push_back(pair<OBAtom*,unsigned int> (i->first,id));
       }
@@ -926,14 +936,18 @@ namespace OpenBabel
     if (!HasSSSRPerceived())
       FindSSSR();
 
-    OBRingData *rd = nullptr;
-    if (!HasData("SSSR")) {
+    // SDF / MDL files can inject "<SSSR>" as a property field, which
+    // ends up stored as an OBPairData under that attribute. The legacy
+    // C-style cast misinterpreted it as OBRingData (UBSAN catches the
+    // vptr mismatch). Validate the type and replace if wrong.
+    OBGenericData *existing = GetData("SSSR");
+    OBRingData *rd = dynamic_cast<OBRingData *>(existing);
+    if (rd == nullptr) {
+      if (existing) DeleteData(existing);
       rd = new OBRingData();
       rd->SetAttribute("SSSR");
       SetData(rd);
     }
-
-    rd = (OBRingData *) GetData("SSSR");
     rd->SetOrigin(perceived);
     return(rd->GetData());
   }
@@ -943,14 +957,15 @@ namespace OpenBabel
     if (!HasLSSRPerceived())
       FindLSSR();
 
-    OBRingData *rd = nullptr;
-    if (!HasData("LSSR")) {
+    // Same type-confusion guard as GetSSSR().
+    OBGenericData *existing = GetData("LSSR");
+    OBRingData *rd = dynamic_cast<OBRingData *>(existing);
+    if (rd == nullptr) {
+      if (existing) DeleteData(existing);
       rd = new OBRingData();
       rd->SetAttribute("LSSR");
       SetData(rd);
     }
-
-    rd = (OBRingData *) GetData("LSSR");
     rd->SetOrigin(perceived);
     return(rd->GetData());
   }
@@ -1027,7 +1042,8 @@ namespace OpenBabel
           obErrorLog.ThrowError(__FUNCTION__, buffer, obWarning);
           continue;
         }
-        bool IsHiso = anum == 1 && a->GetIsotope()>=2;
+        unsigned int iso = a->GetIsotope();
+        bool IsHiso = anum == 1 && (iso == 2 || iso == 3);
         if(UseImplicitH)
           {
             if (anum == 1 && !IsHiso && HasHvyAtoms)
@@ -1041,7 +1057,7 @@ namespace OpenBabel
               atomicCount[0] += a->GetImplicitHCount() + a->ExplicitHydrogenCount();
           }
         if (IsHiso)
-          anum = NumElements + a->GetIsotope() - 3; //pseudo AtNo for D, T
+          anum = NumElements + iso - 3; //pseudo AtNo for D, T
         atomicCount[anum - 1]++;
       }
 
@@ -1216,7 +1232,7 @@ namespace OpenBabel
           {
             if (atom->GetSpinMultiplicity() > 1)
               unpaired_electrons += (atom->GetSpinMultiplicity() - 1);
-           chg += atom->GetAtomicNum();
+           chg += static_cast<int>(atom->GetAtomicNum());
           }
         if (chg % 2 != unpaired_electrons %2)
           return ((abs(chg) % 2) + 1);
@@ -1441,6 +1457,18 @@ namespace OpenBabel
       obErrorLog.ThrowError(__FUNCTION__,
                             "Ran OpenBabel::Clear Molecule", obAuditMsg);
 
+    // Destroy residues first: ~OBResidue() walks its atom list to clear
+    // back-pointers via SetResidue(nullptr). If atoms were destroyed
+    // first, those calls would dereference dead pointers (UBSAN trips
+    // in residue.cpp:853). The symmetric path in ~OBAtom() already
+    // handles the reverse direction by checking _residue != nullptr.
+    unsigned int ii;
+    for (ii=0 ; ii<_residue.size() ; ++ii)
+      {
+        DestroyResidue(_residue[ii]);
+      }
+    _residue.clear();
+
     vector<OBAtom*>::iterator i;
     vector<OBBond*>::iterator j;
     for (i = _vatom.begin();i != _vatom.end();++i)
@@ -1457,14 +1485,6 @@ namespace OpenBabel
     _atomIds.clear();
     _bondIds.clear();
     _natoms = _nbonds = 0;
-
-    //Delete residues
-    unsigned int ii;
-    for (ii=0 ; ii<_residue.size() ; ++ii)
-      {
-        DestroyResidue(_residue[ii]);
-      }
-    _residue.clear();
 
     //clear out the multiconformer data
     vector<double*>::iterator k;
@@ -2027,6 +2047,11 @@ namespace OpenBabel
     if (atom->GetAtomicNum() != OBElements::Hydrogen)
       return false;
 
+    // OBAngleData/OBTorsionData cache raw OBAtom* pointers; drop them now so
+    // a later FOR_ANGLES_OF_MOL doesn't read freed memory.
+    DeleteData(OBGenericDataType::AngleData);
+    DeleteData(OBGenericDataType::TorsionData);
+
     unsigned atomidx = atom->GetIdx();
 
     //find bonds to delete
@@ -2267,7 +2292,9 @@ namespace OpenBabel
 
                 int bondFlags = 0;
                 AddBond(atom->GetIdx(),h->GetIdx(),1, bondFlags);
-                h->SetCoordPtr(&_c);
+                if (_c) {
+                  h->SetCoordPtr(&_c);
+                }
                 OpenBabel::ImplicitRefToStereo(*this, atom->GetId(), h->GetId());
               }
           }
@@ -2386,7 +2413,7 @@ namespace OpenBabel
 
 
 
-  bool OBMol::AssignSpinMultiplicity(bool NoImplicitH)
+  bool OBMol::AssignSpinMultiplicity(bool /*NoImplicitH*/)
   {
     // TODO: The following functions simply returns true, as it has been made
     // redundant by changes to the handling of implicit hydrogens, and spin.
@@ -2428,6 +2455,11 @@ namespace OpenBabel
   {
     if (atom->GetAtomicNum() == OBElements::Hydrogen)
       return(DeleteHydrogen(atom));
+
+    // OBAngleData/OBTorsionData cache raw OBAtom* pointers; drop them now so
+    // a later FOR_ANGLES_OF_MOL doesn't read freed memory.
+    DeleteData(OBGenericDataType::AngleData);
+    DeleteData(OBGenericDataType::TorsionData);
 
     BeginModify();
     //don't need to do anything with coordinates b/c
@@ -2486,6 +2518,11 @@ namespace OpenBabel
 
   bool OBMol::DeleteBond(OBBond *bond, bool destroyBond)
   {
+    // Cached angles/torsions are derived from bond connectivity. They aren't
+    // a UAF risk here, but they no longer match the topology — invalidate.
+    DeleteData(OBGenericDataType::AngleData);
+    DeleteData(OBGenericDataType::TorsionData);
+
     BeginModify();
 
     (bond->GetBeginAtom())->DeleteBond(bond);
@@ -2534,6 +2571,7 @@ namespace OpenBabel
         if (!bgn || !end)
           {
             obErrorLog.ThrowError(__FUNCTION__, "Unable to add bond - invalid atom index", obDebug);
+            delete bond;
             return(false);
           }
         bond->Set(_nbonds,bgn,end,order,flags);
@@ -2763,12 +2801,14 @@ namespace OpenBabel
     vector<OBAtom*>::iterator i;
     vector<OBBond*>::iterator j;
     vector<OBResidue*>::iterator r;
+    // Destroy residues before atoms so ~OBResidue() can clear back-
+    // pointers on still-live atoms (see Clear() for the same reason).
+    for (residue = BeginResidue(r);residue;residue = NextResidue(r))
+      DestroyResidue(residue);
     for (atom = BeginAtom(i);atom;atom = NextAtom(i))
       DestroyAtom(atom);
     for (bond = BeginBond(j);bond;bond = NextBond(j))
       DestroyBond(bond);
-    for (residue = BeginResidue(r);residue;residue = NextResidue(r))
-      DestroyResidue(residue);
 
     //clear out the multiconformer data
     vector<double*>::iterator k;
@@ -2783,7 +2823,7 @@ namespace OpenBabel
     vector<OBAtom*>::iterator i;
 
     for (atom = BeginAtom(i);atom;atom = NextAtom(i))
-      if (atom->GetVector() != VZero)
+      if (atom->GetVector().length_2() != 0.0)
         return(true);
 
     return(false);
@@ -2798,9 +2838,9 @@ namespace OpenBabel
     hasX = hasY = false;
     for (atom = BeginAtom(i);atom;atom = NextAtom(i))
       {
-        if (!hasX && !IsNearZero(atom->x()))
+        if (!hasX && fabs(atom->x()) >= 2e-6)
           hasX = true;
-        if (!hasY && !IsNearZero(atom->y()))
+        if (!hasY && fabs(atom->y()) >= 2e-6)
           hasY = true;
         if(Not3D && atom->z())
           return false;
@@ -2821,11 +2861,11 @@ namespace OpenBabel
     //      return(false);
     for (atom = BeginAtom(i);atom;atom = NextAtom(i))
       {
-        if (!hasX && !IsNearZero(atom->x()))
+        if (!hasX && fabs(atom->x()) >= 2e-6)
           hasX = true;
-        if (!hasY && !IsNearZero(atom->y()))
+        if (!hasY && fabs(atom->y()) >= 2e-6)
           hasY = true;
-        if (!hasZ && !IsNearZero(atom->z()))
+        if (!hasZ && fabs(atom->z()) >= 2e-6)
           hasZ = true;
 
         if (hasX && hasY && hasZ)
@@ -3247,7 +3287,7 @@ namespace OpenBabel
     rlist = GetSSSR();
     for (ringit = rlist.begin(); ringit != rlist.end(); ++ringit)
       {
-        if ((*ringit)->PathSize() == 5)
+        if ((*ringit)->Size() == 5)
           {
             path = (*ringit)->_path;
             torsions =
@@ -3269,7 +3309,7 @@ namespace OpenBabel
                   }
               }
           }
-        else if ((*ringit)->PathSize() == 6)
+        else if ((*ringit)->Size() == 6)
           {
             path = (*ringit)->_path;
             torsions =
@@ -3338,7 +3378,7 @@ namespace OpenBabel
     for (ringit = rlist.begin(); ringit != rlist.end(); ++ringit)
       {
         typed = false;
-        loopSize = (*ringit)->PathSize();
+        loopSize = (*ringit)->Size();
         if (loopSize == 5 || loopSize == 6 || loopSize == 7)
           {
             path = (*ringit)->_path;
@@ -3918,8 +3958,13 @@ namespace OpenBabel
         bonds.erase(bonds.begin() + bi);
         OBAtom *bgn = bond->GetBeginAtom();
         OBAtom *end = bond->GetEndAtom();
-        int blockb = BLOCKS[bgn->GetAtomicNum()];
-        int blocke = BLOCKS[end->GetAtomicNum()];;
+        // _ele is an unsigned char (0..255), but BLOCKS only covers known
+        // elements (Z<=112). Treat anything outside the table as block 0
+        // so the heuristics below leave the bond as a plain single bond.
+        unsigned int zb = bgn->GetAtomicNum();
+        unsigned int ze = end->GetAtomicNum();
+        int blockb = (zb < sizeof(BLOCKS)/sizeof(BLOCKS[0])) ? BLOCKS[zb] : 0;
+        int blocke = (ze < sizeof(BLOCKS)/sizeof(BLOCKS[0])) ? BLOCKS[ze] : 0;
         pair<int, int> lb = bgn->LewisAcidBaseCounts();
         pair<int, int> le = end->LewisAcidBaseCounts();
         int chg = 0; // Amount to adjust atom charges

@@ -54,7 +54,7 @@ namespace OpenBabel {
       return READONEONLY | NOTWRITABLE;
     }
 
-    int SkipObjects(int n, OBConversion* pConv) override
+    int SkipObjects(int /*n*/, OBConversion* /*pConv*/) override
     {
       return 0;
     }
@@ -296,21 +296,27 @@ namespace OpenBabel {
       // Single point energy
       if (strstr(buffer, "Total lattice energy") && strstr(buffer, "eV") ) {
         tokenize(vs, buffer);
-        pmol->SetEnergy(atof(vs[4].c_str()) * EV_TO_KCAL_PER_MOL);
+        if (vs.size() > 4) {
+          pmol->SetEnergy(atof(vs[4].c_str()) * EV_TO_KCAL_PER_MOL);
+        }
       }
 
       // Final energy
       if (strstr(buffer, "Final energy")) {
         tokenize(vs, buffer);
-        pmol->SetEnergy(atof(vs[3].c_str()) * EV_TO_KCAL_PER_MOL);
+        if (vs.size() > 3) {
+          pmol->SetEnergy(atof(vs[3].c_str()) * EV_TO_KCAL_PER_MOL);
+        }
       }
 
       // Enthalpy (molecular)
       if (strstr(buffer, "Final enthalpy")) {
         hasEnthalpy = true;
         tokenize(vs, buffer);
-        enthalpy_eV = atof(vs[3].c_str());
-        pv_eV = 0.0;
+        if (vs.size() > 3) {
+          enthalpy_eV = atof(vs[3].c_str());
+          pv_eV = 0.0;
+        }
       }
 
       // Enthalphy (periodic)
@@ -323,16 +329,21 @@ namespace OpenBabel {
         while (strstr(buffer, "kJ/(mole unit cells)") == nullptr) {
           if (strstr(buffer, "Pressure*volume")) {
             tokenize(vs, buffer);
-            pv_eV = atof(vs[2].c_str());
-            hasPV = true;
+            if (vs.size() > 2) {
+              pv_eV = atof(vs[2].c_str());
+              hasPV = true;
+            }
           }
 
           if (strstr(buffer, "Total lattice enthalpy")) {
             tokenize(vs, buffer);
-            enthalpy_eV = atof(vs[4].c_str());
+            if (vs.size() > 4) {
+              enthalpy_eV = atof(vs[4].c_str());
+            }
           }
 
-          ifs.getline(buffer,BUFF_SIZE);
+          if (!ifs.getline(buffer,BUFF_SIZE))
+            break;
         }
         if (hasPV)
           pmol->SetEnergy((enthalpy_eV - pv_eV) * EV_TO_KCAL_PER_MOL);

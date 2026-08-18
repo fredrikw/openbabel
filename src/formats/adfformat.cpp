@@ -74,7 +74,7 @@ namespace OpenBabel {
     }
 
     const char* SpecificationURL() override
-    { return "http://www.scm.com/"; }  // optional
+    { return "https://www.scm.com/"; }
 
     //Flags() can return be any the following combined by | or be omitted if none apply
     // NOTREADABLE  READONEONLY  NOTWRITABLE  WRITEONEONLY
@@ -275,12 +275,12 @@ namespace OpenBabel {
     }
 
     const char* SpecificationURL() override
-    { return "http://www.scm.com/Doc/Doc2007.01/ADF/ADFUsersGuide/page32.html"; }  // optional
+    { return "https://www.scm.com/doc/ADF/index.html"; }
 
     //*** This section identical for most OBMol conversions ***
     ////////////////////////////////////////////////////
     /// The "API" interface functions
-    bool ReadMolecule(OBBase* pOb, OBConversion* pConv) override
+    bool ReadMolecule(OBBase* /*pOb*/, OBConversion* /*pConv*/) override
       { return false; }
     bool WriteMolecule(OBBase* pOb, OBConversion* pConv) override;
 
@@ -672,7 +672,7 @@ public:
     /// I couldn't find it but close enough.
     const char* SpecificationURL() override
     {
-        return "http://www.scm.com/Doc/Doc2006.01/ADF/Analysis/page8.html";
+        return "https://www.scm.com/doc/ADF/index.html";
     }
 
     /// Return MIME type, NULL in this case.
@@ -685,7 +685,7 @@ public:
     }
 
     /// Skip to object: used for multi-object file formats.
-    int SkipObjects(int n, OBConversion* pConv) override { return 0; }
+    int SkipObjects(int /*n*/, OBConversion* /*pConv*/) override { return 0; }
 
     /// Read.
     bool ReadMolecule(OBBase* pOb, OBConversion* pConv) override;
@@ -726,7 +726,7 @@ private:
 
 
     /// Add grids from SCF
-    void AddSCFGrids( istream& is, OBGridData& t41 ) {}
+    void AddSCFGrids( istream& /*is*/, OBGridData& /*t41*/ ) {}
 
     ///Inner class used to hold atomic number, coordinate, charge data
     struct AtomData
@@ -792,7 +792,11 @@ OBGridData *OBT41Format::NewData(const T41GridData &gd)
 {
         OBGridData *t41Data = new OBGridData;
   t41Data->SetNumberOfPoints( gd.numPoints[ 0 ], gd.numPoints[ 1 ], gd.numPoints[ 2 ] );
-        t41Data->SetLimits( gd.startPoint, gd.xAxis, gd.yAxis, gd.zAxis );
+        t41Data->SetLimits(
+          vector3(gd.startPoint[0], gd.startPoint[1], gd.startPoint[2]),
+          vector3(gd.xAxis[0], gd.xAxis[1], gd.xAxis[2]),
+          vector3(gd.yAxis[0], gd.yAxis[1], gd.yAxis[2]),
+          vector3(gd.zAxis[0], gd.zAxis[1], gd.zAxis[2]) );
   t41Data->SetUnrestricted( gd.unrestricted );
   t41Data->SetNumSymmetries( gd.numSymmetries );
 
@@ -811,7 +815,7 @@ bool OBT41Format::ReadMolecule( OBBase* pOb, OBConversion* pConv )
     return ReadASCII(pOb, pConv);
 }
 
-bool OBT41Format::ReadBinary( OBBase* pOb, OBConversion* pConv )
+bool OBT41Format::ReadBinary(OBBase* /*pOb*/, OBConversion* /*pConv*/)
 {
   obErrorLog.ThrowError( __FUNCTION__, "OpenBabel does not currently support the TAPE41 binary format. Please use dmpkf to convert to ASCII.", obError );
   return false;
@@ -868,8 +872,8 @@ bool OBT41Format::ReadASCII( OBBase* pOb, OBConversion* pConv )
 
       string buf;
       // nuuc
-      while( buf != "Geometry" ) ifs >> buf; cout << buf << endl;
-      ifs >> buf; cout << buf << endl;
+      while( buf != "Geometry" && ifs ) ifs >> buf;
+      ifs >> buf;
       if( buf != "nnuc" )
       {
           obErrorLog.ThrowError( __FUNCTION__, "no 'nuuc' after first Geometry tag" );
@@ -877,12 +881,12 @@ bool OBT41Format::ReadASCII( OBBase* pOb, OBConversion* pConv )
       }
       eol( ifs );
       unsigned int numAtoms = 0;
-      ifs >> numAtoms; cout << numAtoms << endl;
+      ifs >> numAtoms;
       buf  = "";
 
       // labels
-      while( buf != "Geometry" ) ifs >> buf; cout << buf << endl;
-      ifs >> buf; cout << buf << endl;
+      while( buf != "Geometry" ) ifs >> buf;
+      ifs >> buf;
       if( buf != "labels" )
       {
           obErrorLog.ThrowError( __FUNCTION__, "no 'labels' after second Geometry tag" );
@@ -893,7 +897,7 @@ bool OBT41Format::ReadASCII( OBBase* pOb, OBConversion* pConv )
       atoms.reserve( numAtoms );
       for (unsigned int i = 0; i != numAtoms; ++i)
       {
-          ifs >> buf; cout << buf << endl;
+          ifs >> buf;
           atoms.push_back( OBElements::GetAtomicNum( buf.c_str() ) );
       }
       if( atoms.size() != numAtoms )
@@ -903,8 +907,8 @@ bool OBT41Format::ReadASCII( OBBase* pOb, OBConversion* pConv )
       }
       //coordinates
       buf = "";
-      while( buf != "Geometry" ) ifs >> buf; cout << buf << endl;
-      ifs >> buf; cout << buf << endl;
+      while( buf != "Geometry" ) ifs >> buf;
+      ifs >> buf;
       if( buf != "xyznuc" )
       {
           obErrorLog.ThrowError( __FUNCTION__, "no 'xyznuc' after third Geometry tag" );
@@ -914,12 +918,11 @@ bool OBT41Format::ReadASCII( OBBase* pOb, OBConversion* pConv )
       for (unsigned int i = 0; i != numAtoms; ++i)
       {
           ifs >> atoms[ i ].coord[ 0 ] >> atoms[ i ].coord[ 1 ] >> atoms[ i ].coord[ 2 ];
-          cout << atoms[ i ].coord[ 0 ] << ' ' << atoms[ i ].coord[ 1 ] << ' ' << atoms[ i ].coord[ 2 ] << endl;
       }
       //charge
       buf = "";
-      while( buf != "Geometry" ) ifs >> buf; cout << buf << endl;
-      ifs >> buf; cout << buf << endl;
+      while( buf != "Geometry" ) ifs >> buf;
+      ifs >> buf;
       if( buf != "qtch" )
       {
           obErrorLog.ThrowError( __FUNCTION__, "no 'qtch' after fourth Geometry tag" );
@@ -933,8 +936,8 @@ bool OBT41Format::ReadASCII( OBBase* pOb, OBConversion* pConv )
 
       // unit of length
       buf = "";
-      while( buf != "Geometry" ) ifs >> buf; cout << buf << endl;
-      ifs >> buf >> buf >> buf; cout << buf << endl;
+      while( buf != "Geometry" ) ifs >> buf;
+      ifs >> buf >> buf >> buf;
       if( buf != "length" )
       {
           obErrorLog.ThrowError( __FUNCTION__, "no 'unit of length' after fifth Geometry tag" );
@@ -1133,7 +1136,7 @@ bool OBT41Format::ReadSCFOrbitalGrid( istream& is, OBGridData& t41Data ) const
     if( !is ) return false; // eof -> return
     // if we get here it means we are past the orbital number so read
     // read grid values
-    const string label = scf + ' ' + buf; cout << label << endl;
+    const string label = scf + ' ' + buf;
     const int numPoints = t41Data.GetNumberOfPoints();
     vector< double > grid( numPoints );
     eol( is );
@@ -1169,7 +1172,7 @@ bool OBT41Format::ReadSCFGrid( istream& is, OBGridData& t41Data ) const
     // if tag = SCF read next line then skip line and read grid data
     const string scf = buf; // SCF
     is >> buf; // tag on line after SCF
-    const string label = scf + ' ' + buf; cout << label << endl;
+    const string label = scf + ' ' + buf;
     eol( is );
     if( !is ) return false;
     // read grid data
@@ -1206,7 +1209,7 @@ bool OBT41Format::ReadSumFragGrid( istream& is, OBGridData& t41Data ) const
     if( !is ) return false; // not found -> return
     const string sumfrag = buf; // found read next line then skip one line and read data
     is >> buf;
-    const string label = sumfrag + ' ' + buf; cout << label << endl;
+    const string label = sumfrag + ' ' + buf;
     eol( is );
     if( !is ) return false;
     const int numPoints = t41Data.GetNumberOfPoints();

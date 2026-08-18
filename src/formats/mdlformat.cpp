@@ -107,7 +107,7 @@ namespace OpenBabel
 
       const char* SpecificationURL() override
       {
-        return "https://www.3dsbiovia.com/products/collaborative-science/biovia-draw/ctfile-no-fee.html";
+        return "https://www.3ds.com/products/biovia/draw";
       }
 
       const char* GetMIMEType() override
@@ -627,9 +627,11 @@ namespace OpenBabel
           break;
         if (line.substr(0, 6) == "S  SKP") {
           int i = ReadUIntField((line.substr(6, line.size() - 6)).c_str());
-          for(; i > 0; --i)
-            if (ifs.good()) // check for EOL, suggested by Dalke
-              std::getline(ifs, line);
+          for(; i > 0; --i) {
+            if (!ifs.good()) // stop once the stream is exhausted; otherwise
+              break;         // a huge skip count busy-loops to timeout
+            std::getline(ifs, line);
+          }
         }
 
         if (line.substr(0, 3) == "A  " && line.size() > 3) { //alias
@@ -638,17 +640,17 @@ namespace OpenBabel
           //and the alias is ignored if the line starts with ? or * or is blank .
           std::getline(ifs, line);
           if(!line.empty() && line.at(0) != '?' && line.at(0) != '*') {
-            AliasData* ad = new AliasData();
-            ad->SetAlias(line);
-            ad->SetOrigin(fileformatInput);
             OBAtom* at = mol.GetAtom(atomnum);
             if (at) { // dkoes - only expand wild cards
+              AliasData* ad = new AliasData();
+              ad->SetAlias(line);
+              ad->SetOrigin(fileformatInput);
               at->SetData(ad);
               //at->SetAtomicNum(0); Now leave element as found
               //The alias has now been added as a dummy atom with a AliasData object.
               //Delay the chemical interpretation until the rest of the molecule has been built
               //dkoes - only expand alias if referenced atom is wild card
-              //this is necessary since this field is used to store atom names (at least in the PDB)              
+              //this is necessary since this field is used to store atom names (at least in the PDB)
               if(at->GetAtomicNum() == 0)
                 aliases.push_back(make_pair(ad, at));
             }
@@ -794,7 +796,10 @@ namespace OpenBabel
         // So, if the valence field was specified use that, otherwise
         // use the implicit valence adjusted by any M RAD.
         std::map<OBAtom*, int>::const_iterator mit = specified_valence.find(&*atom);
-        unsigned int impval;
+        // Signed: impval can legitimately drop below the explicit valence (a
+        // radical M RAD adjustment, or a specified valence lower than observed),
+        // and numH is then clamped to >= 0 below. Unsigned here would underflow.
+        int impval;
         if (mit != specified_valence.end()) {
           impval = mit->second;
           if (impval < expval) {
@@ -821,7 +826,7 @@ namespace OpenBabel
           }
           impval -= delta;
         }
-        int numH = impval - expval;
+        int numH = impval - static_cast<int>(expval);
         atom->SetImplicitHCount(numH > 0 ? numH : 0);
       }
     }
@@ -953,7 +958,7 @@ namespace OpenBabel
 
   // If this atom should be considered an RGroup Alias this function
   // returns 0 or a positive integer, but -1 otherwise
-  static int GetNumberedRGroup(OBMol* pmol, OBAtom* atom)
+  static int GetNumberedRGroup(OBMol* /*pmol*/, OBAtom* atom)
   {
     if (atom->GetAtomicNum() == 0) { // Must be a pseudoatom
       if(atom->HasData(AliasDataType)) {
@@ -1417,16 +1422,20 @@ namespace OpenBabel
 
 
   //////////////////////////////////////////////////////
-  bool MDLFormat::ReadV3000Block(istream& ifs, OBMol& mol, OBConversion* pConv,bool DoMany)
+  bool MDLFormat::ReadV3000Block(istream& ifs, OBMol& mol, OBConversion* pConv, bool /*DoMany*/)
   {
     bool ret = true;
     do
       {
         if(!ReadV3000Line(ifs,vs)) return false;
         if(vs[1]=="END") return true;
+        // ReadV3000Line only guarantees vs.size() >= 2. Block-level
+        // directives use vs[2] and vs[3]; bail out on truncated lines.
+        if(vs.size() < 3) return false;
         if(vs[2]=="LINKNODE"){continue;} //not implemented
         if(vs[2]!="BEGIN") return false;
 
+        if(vs.size() < 4) return false;
         if(vs[3]=="CTAB")
           {
             if(!ReadV3000Line(ifs,vs) || vs[2]!="COUNTS") return false;
@@ -1437,6 +1446,9 @@ namespace OpenBabel
             mol.ReserveAtoms(natoms);
 
             ReadV3000Block(ifs,mol,pConv,true);//go for contained blocks
+            // The recursive call shares the member `vs` and may leave it
+            // with fewer than 4 tokens; bounds-check before comparing.
+            if(vs.size() < 4) return false;
             if(vs[2]!="END" && vs[3]!="CTAB") return false;
             ret= true;
           }
@@ -1471,18 +1483,23 @@ namespace OpenBabel
     if (vs.size() < 2) return false; // timvdm 18/06/2008
     if(vs[0]!="M" || (vs[1]!="V30" && vs[1]!="END")) return false;
 
-    if(buffer[strlen(buffer)-1] == '-') //continuation char
-      {
-        //Read continuation line iteratively and add parsed tokens (without M V30) to vs
-        vector<string> vsx;
-        if(!ReadV3000Line(ifs,vsx)) return false;
+    // Iterative continuation-line handling (avoids stack overflow on crafted input)
+    size_t len = strlen(buffer);
+    while(len > 0 && buffer[len-1] == '-') {
+      if(!ifs.getline(buffer,BUFF_SIZE)) return false;
+      vector<string> vsx;
+      tokenize(vsx,buffer," \t\n\r");
+      if(vsx.size() < 2) return false;
+      if(vsx[0]!="M" || (vsx[1]!="V30" && vsx[1]!="END")) return false;
+      if(vsx.size() > 3)
         vs.insert(vs.end(),vsx.begin()+3,vsx.end());
-      }
+      len = strlen(buffer);
+    }
     return true;
   }
 
   //////////////////////////////////////////////////////
-  bool MDLFormat::ReadAtomBlock(istream& ifs,OBMol& mol, OBConversion* pConv)
+  bool MDLFormat::ReadAtomBlock(istream& ifs, OBMol& mol, OBConversion* /*pConv*/)
   {
     OBAtom atom;
     bool chiralWatch=false;
@@ -1490,7 +1507,9 @@ namespace OpenBabel
     for(obindex=1;;obindex++)
       {
         if(!ReadV3000Line(ifs,vs)) return false;
+        if(vs.size() < 3) return false;
         if(vs[2]=="END") break;
+        if(vs.size() < 7) return false; // need index, type, x, y, z
 
         indexmap[ReadUIntField(vs[2].c_str())] = obindex;
         atom.SetVector(atof(vs[4].c_str()), atof(vs[5].c_str()), atof(vs[6].c_str()));
@@ -1559,12 +1578,13 @@ namespace OpenBabel
   }
 
   //////////////////////////////////////////////////////
-  bool MDLFormat::ReadBondBlock(istream& ifs,OBMol& mol, OBConversion* pConv)
+  bool MDLFormat::ReadBondBlock(istream& ifs, OBMol& mol, OBConversion* /*pConv*/)
   {
     for(;;)
       {
         if(!ReadV3000Line(ifs,vs)) return false;
         if(vs[2]=="END") break;
+        if(vs.size() < 6) return false; // need index, order, atom1, atom2
 
         unsigned flag=0;
 
@@ -1600,7 +1620,7 @@ namespace OpenBabel
   }
 
 ////////////////////////////////////////////////////////////
-  bool MDLFormat::ReadUnimplementedBlock(istream& ifs,OBMol& mol, OBConversion* pConv, string& blockname)
+  bool MDLFormat::ReadUnimplementedBlock(istream& ifs, OBMol& /*mol*/, OBConversion* /*pConv*/, string& blockname)
   {
     //Not currently implemented
     obErrorLog.ThrowError(__FUNCTION__,
@@ -1616,7 +1636,7 @@ namespace OpenBabel
   }
 
 ////////////////////////////////////////////////////////////
-  bool MDLFormat::ReadRGroupBlock(istream& ifs,OBMol& mol, OBConversion* pConv)
+  bool MDLFormat::ReadRGroupBlock(istream& ifs, OBMol& /*mol*/, OBConversion* /*pConv*/)
   {
     //Not currently implemented
     obErrorLog.ThrowError(__FUNCTION__,
@@ -1633,7 +1653,7 @@ namespace OpenBabel
   }
 
   //////////////////////////////////////////////////////////
-  bool MDLFormat::WriteV3000(ostream& ofs,OBMol& mol, OBConversion* pConv)
+  bool MDLFormat::WriteV3000(ostream& ofs, OBMol& mol, OBConversion* /*pConv*/)
   {
     bool chiralFlag = GetChiralFlagFromGenericData(mol);
 
@@ -1646,14 +1666,19 @@ namespace OpenBabel
     OBAtom *atom;
     int index=1;
     vector<OBAtom*>::iterator i;
+    // Use fixed-point formatting to avoid scientific notation for near-zero
+    // coordinates (e.g. 2.22045e-16). Higher precision for true 3D coords.
+    const char* coordFmt = (mol.GetDimension() == 3) ? "%.6f %.6f %.6f"
+                                                    : "%.4f %.4f %.4f";
     for (atom = mol.BeginAtom(i);atom;atom = mol.NextAtom(i))
       {
+        char coords[64];
+        snprintf(coords, sizeof(coords), coordFmt,
+                 atom->GetX(), atom->GetY(), atom->GetZ());
         ofs     << "M  V30 "
                 << index++ << " "
                 << OBElements::GetSymbol(atom->GetAtomicNum()) << " "
-                << atom->GetX() << " "
-                << atom->GetY() << " "
-                << atom->GetZ()
+                << coords
                 << " 0";
         if(atom->GetFormalCharge()!=0)
           ofs << " CHG=" << atom->GetFormalCharge();
@@ -1932,7 +1957,10 @@ namespace OpenBabel
         dp->SetOrigin(fileformatInput);
         mol.SetData(dp);
 
-        if(!strcasecmp(attr.c_str(),"NAME") && *mol.GetTitle()=='\0')
+        // Pass false to skip the newline-replacement pass; we only need
+        // to know whether the title is empty. Avoids quadratic work in
+        // GetTitle when the title already contains newlines.
+        if(!strcasecmp(attr.c_str(),"NAME") && *mol.GetTitle(false)=='\0')
           mol.SetTitle(buff);
       }
       if (line.substr(0, 4) ==  "$$$$")

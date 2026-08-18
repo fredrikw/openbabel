@@ -54,8 +54,10 @@ public:
 OpChangeCell theOpChangeCell("ChangeCell"); //Global instance
 
 /////////////////////////////////////////////////////////////////
-bool OpChangeCell::Do(OBBase* pOb, const char* OptionText, OpMap* pOptions, OBConversion* pConv)
+bool OpChangeCell::Do(OBBase* pOb, const char* OptionText, OpMap* /*pOptions*/, OBConversion* /*pConv*/)
 {
+  if (!OptionText)
+    OptionText = "";
   std::vector<std::string> vcr;
   tokenize(vcr, OptionText, ";");
 

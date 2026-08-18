@@ -893,12 +893,17 @@ namespace OpenBabel
                       end.x() + spacing.x() - offset.x(), end.y() + spacing.y() - offset.y());
   }
 
-  void OBDepictPrivate::DrawAtom(OBAtom *atom)
+  void OBDepictPrivate::DrawAtom(OBAtom * /*atom*/)
   {
   }
 
   void OBDepictPrivate::DrawAtomLabel(const std::string &label, int alignment, const vector3 &pos)
   {
+    // OBElements::GetSymbol() returns "" for atomic numbers outside the
+    // known element table (Z > NUMELEMENTS). The substr math below uses
+    // label.size()-1 which underflows on an empty string and throws.
+    if (label.empty())
+      return;
    /*
     cout << "FontMetrics(" << label << "):" << endl;
     cout << "  ascent = " << metrics.ascent << endl;
@@ -1065,7 +1070,7 @@ namespace OpenBabel
     }
   }
   void OBDepictPrivateBallAndStick::DrawSimpleBond(OBAtom* beginAtom,
-  OBAtom* endAtom, int order, bool crossed_bond)
+  OBAtom* endAtom, int order, bool /*crossed_bond*/)
   {
     const vector3 begin = beginAtom->GetVector();
     const vector3 end = endAtom->GetVector();
@@ -1221,7 +1226,7 @@ OBBitVec& drawnBonds)
     }
   }
 
-  inline void OBDepictPrivateBallAndStick::DrawAromaticRingBond(OBAtom *prevAtom, OBAtom *beginAtom, OBAtom *endAtom, OBAtom *nextAtom, const vector3 &center, double dist)
+  inline void OBDepictPrivateBallAndStick::DrawAromaticRingBond(OBAtom *prevAtom, OBAtom *beginAtom, OBAtom *endAtom, OBAtom *nextAtom, const vector3 & /*center*/, double /*dist*/)
   {
     const vector3 prev  = prevAtom->GetVector();
     const vector3 begin = beginAtom->GetVector();

@@ -28,6 +28,8 @@ GNU General Public License for more details.
 #include <openbabel/stereo/stereo.h>
 #include <openbabel/stereo/cistrans.h>
 
+#include <memory>
+
 #ifndef WIN32
 #include <cmath>
 #endif
@@ -516,7 +518,7 @@ namespace OpenBabel {
     k1=nv;
     k1=k1-currvalence-abs(nc)-rl;
     if (k1<0) k1=0;
-    k2=hVal[na];
+    k2=(na >= 0 && na < NELEMMCDL) ? hVal[na] : 0;
     k2=k2-currvalence-abs(nc)-rl;
     if (k2<0) k2=0;
     if (k1 == k2) result=0; else if (k1 < k2) result=1; else result=2;
@@ -626,7 +628,7 @@ namespace OpenBabel {
 
   int TSingleBond::getValence() {
     int result=0;
-    if (this->tb <=NBONDTYPES) result=bondValence[this->tb-1];
+    if (this->tb >= 1 && this->tb <= NBONDTYPES) result=bondValence[this->tb-1];
     return result;
   };
 
@@ -1627,16 +1629,23 @@ namespace OpenBabel {
     for (i=0; i<nAtoms(); i++) {
       getAtom(i)->nb=0;
       getAtom(i)->currvalence=0;
+      for (int j=0; j<CONNMAX; j++) {
+        getAtom(i)->ac[j]=0;
+      }
     };
     for (i=0; i<nBonds(); i++) {
       n1=getBond(i)->at[0]; n2=getBond(i)->at[1];
       sa=getAtom(n1);
-      sa->ac[sa->nb]=n2;
-      sa->nb++;
+      if (sa->nb < CONNMAX) {
+        sa->ac[sa->nb]=n2;
+        sa->nb++;
+      }
       sa->currvalence=sa->currvalence+getBond(i)->getValence();
       sa=getAtom(n2);
-      sa->ac[sa->nb]=n1;
-      sa->nb++;
+      if (sa->nb < CONNMAX) {
+        sa->ac[sa->nb]=n1;
+        sa->nb++;
+      }
       sa->currvalence=sa->currvalence+getBond(i)->getValence();
     };
   };
@@ -1648,10 +1657,14 @@ namespace OpenBabel {
     for (i=0; i<nAtoms(); i++) bondConnection[i].nb=0;
     for (i=0; i<nBonds(); i++) {
       n1=getBond(i)->at[0]; n2=getBond(i)->at[1];
-      bondConnection[n1].adjusted[bondConnection[n1].nb]=i;
-      bondConnection[n1].nb++;
-      bondConnection[n2].adjusted[bondConnection[n2].nb]=i;
-      bondConnection[n2].nb++;
+      if (bondConnection[n1].nb < CONNMAX) {
+        bondConnection[n1].adjusted[bondConnection[n1].nb]=i;
+        bondConnection[n1].nb++;
+      }
+      if (bondConnection[n2].nb < CONNMAX) {
+        bondConnection[n2].adjusted[bondConnection[n2].nb]=i;
+        bondConnection[n2].nb++;
+      }
     };
   };
 
@@ -2163,7 +2176,7 @@ namespace OpenBabel {
   };
 
   void TSimpleMolecule::redraw(const std::vector<int>listAtomClean, const std::vector<int>listBondClean,
-                               int atomClean, int & bondClean, int spn, int sCHA1, int sCHB1, bool iOPT7) {
+                               int atomClean, int & bondClean, int spn, int sCHA1, int sCHB1, bool /*iOPT7*/) {
     /*
       the arrays are the priority list for clean. Minimal element of record has
       the maximal priority. Each element of record contains:
@@ -2297,7 +2310,7 @@ namespace OpenBabel {
         r1=0;
         for (i=0; i<nBonds(); i++) if (tempBondArray[i] == 0) {
             r=this->bondLength(i);
-            if (r < bondLengthOld) bondLengthOld=n;
+            if (r < bondLengthOld) bondLengthOld=r;
             r1=r1+r;
             n++;
           };
@@ -3234,7 +3247,9 @@ namespace OpenBabel {
         l2=ab[aList[0]];
         if (n > 1) for (i=1; i<n; i++) {
             l3=ab[aList[i]];
-            l3=l3 << (i*i2);
+            // Shift in unsigned to avoid signed overflow UB — this is a
+            // fingerprint hash, so wraparound is the desired behavior.
+            l3=static_cast<int>(static_cast<unsigned int>(l3) << (i*i2));
             l2=l2 ^ l3;
           };
         l3=0;
@@ -3677,7 +3692,7 @@ namespace OpenBabel {
 
   static int determineBondsOrder(const std::vector<int> iA1, const std::vector<int> iA2,
                                  const std::vector<int> nH, const std::vector<int> maxValency,std::vector<int>& bondOrder,
-                                 std::vector<int>& hydrogenValency, int nAtoms, int nBonds, bool oddEvenViolate) {
+                                 std::vector<int>& hydrogenValency, int nAtoms, int nBonds, bool /*oddEvenViolate*/) {
     //On input BortOrder has to be initialized. Real bond orders have to be putted. 0 means this order should be determined
     //MaxValency and HydrogenValency and NH are required only for those atoms, which are included in BondOrder=0
 
@@ -5074,16 +5089,17 @@ namespace OpenBabel {
   class  TemplateRedraw  {
   public:
     TemplateRedraw();
-    //  virtual ~TemplateRedraw() {
-    //    clear();
-    //  };
     bool isOverlapped(const std::vector<PartFragmentDefinition *> list, int fragNo, double xSuggested, double ySuggested);
     void arrangeFragments(std::vector<PartFragmentDefinition *>& list, int fragNo, double aspOptimal);
     void redrawFine(TSimpleMolecule& smIn);
     int  coordinatesPrepare(TEditedMolecule& sm, int kk, int anTemplateNo);
   private:
-    static std::vector<TEditedMolecule *> queryData;
-    void clear();
+    // Cache of query templates, loaded once on first construction and
+    // shared across all instances. Owned via unique_ptr so static
+    // destruction at program exit frees them (the previous raw-pointer
+    // vector leaked the entries — destructor was disabled because every
+    // stack-allocated TemplateRedraw would otherwise wipe the cache).
+    static std::vector<std::unique_ptr<TEditedMolecule>> queryData;
     bool internalBondsPresent(TEditedMolecule * mQuery, TSimpleMolecule * mStructure);
     void rotateBondVertically(TSimpleMolecule * sm, const std::vector<int>bondList, int bondNo,
                               double xuValue, double yuValue, double& c1, double& s1, double& xSize, double& ySize,
@@ -5095,7 +5111,7 @@ namespace OpenBabel {
   };
 
   //Initialization of static member variable
-  std::vector<TEditedMolecule *> TemplateRedraw::queryData;
+  std::vector<std::unique_ptr<TEditedMolecule>> TemplateRedraw::queryData;
 
   bool TemplateRedraw::loadTemplates() {
     std::ifstream ifs;
@@ -5136,7 +5152,7 @@ namespace OpenBabel {
         sm.allAboutCycles();
         em=new TEditedMolecule();
         em->prepareQuery(sm);
-        queryData.push_back(em);
+        queryData.emplace_back(em);
       }
       result=true;
       obErrorLog.ThrowError(__FUNCTION__, "Read OK " + filename, obInfo);
@@ -5165,29 +5181,22 @@ namespace OpenBabel {
           sm.allAboutCycles();
           em=new TEditedMolecule();
           em->prepareQuery(sm);
-          queryData.push_back(em);
+          queryData.emplace_back(em);
         }
         if (queryData.size()>1) for (i=0; i<(queryData.size()-1); i++) for (j=i+1; j<queryData.size(); j++) {
               test=false;
-              em1=(TEditedMolecule *)queryData[i];
-              em2=(TEditedMolecule *)queryData[j];
+              em1=queryData[i].get();
+              em2=queryData[j].get();
               if (em1->nAtoms() < em2->nAtoms()) test=true; else
                 if (em1->nAtoms() > em2->nAtoms()) test=false; else
                   if (em1->nBonds() < em2->nBonds()) test=true;
 
               if (test) {
-                queryData[i]=em2;
-                queryData[j]=em1;
+                std::swap(queryData[i], queryData[j]);
               }
             }
       }
   }
-
-  void TemplateRedraw::clear() {
-    for (unsigned int i=0; i<queryData.size(); i++) {
-      delete(queryData[i]);
-    };
-  };
 
 
   bool TemplateRedraw::internalBondsPresent(TEditedMolecule * mQuery, TSimpleMolecule * mStructure) {
@@ -5664,8 +5673,8 @@ namespace OpenBabel {
     result=-1;
 
 
-    for (i=kk; i<queryData.size(); i++) if ((TEditedMolecule *)queryData[i]->fragmentSearch(&sm,nullptr)) {
-        em=(TEditedMolecule *)queryData[i];
+    for (i=kk; i<queryData.size(); i++) if (queryData[i]->fragmentSearch(&sm,nullptr)) {
+        em=queryData[i].get();
         if (! internalBondsPresent(em,&sm)) {
           result=i+1;
           break;
@@ -7260,7 +7269,7 @@ namespace OpenBabel {
   };
 
 
-  int canonizeMCDL(const std::string atomBlock, std::vector<std::string> & structureList) {
+  int canonizeMCDL(const std::string /*atomBlock*/, std::vector<std::string>& /*structureList*/) {
     return 0;
   };
 

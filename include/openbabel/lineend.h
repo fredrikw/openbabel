@@ -71,7 +71,7 @@ namespace OpenBabel
 
     //Pass the random acess functions to the source rdbuf and synchronize
     virtual std::streampos   seekoff(std::streamoff off, std::ios_base::seekdir way,
-      std::ios_base::openmode which = std::ios_base::in | std::ios_base::out )
+      std::ios_base::openmode /*which*/ = std::ios_base::in | std::ios_base::out )
     {
       setg(  &myBuffer , &myBuffer , &myBuffer  ) ; //ensure next character is from new position
       mySource->seekg(off, way);
@@ -81,7 +81,7 @@ namespace OpenBabel
     };
 
     virtual std::streampos   seekpos(std::streampos sp,
-      std::ios_base::openmode which = std::ios_base::in | std::ios_base::out )
+      std::ios_base::openmode /*which*/ = std::ios_base::in | std::ios_base::out )
     {
       setg(  &myBuffer , &myBuffer , &myBuffer  ) ;
       //slight hack - if mySource has read past the end, won't let us seek
@@ -138,7 +138,7 @@ namespace OpenBabel
       {
         if( result < 0 || result > UCHAR_MAX )
           std::cerr << "FilteringInputStreambuf error" << std::endl;
-        myBuffer = result ;
+        myBuffer = static_cast<char>(static_cast<unsigned char>(result)) ;
         setg( &myBuffer , &myBuffer , &myBuffer + 1 ) ;
       }
     }

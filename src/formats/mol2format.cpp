@@ -62,8 +62,8 @@ namespace OpenBabel
 
     const char* SpecificationURL() override
     {
-      return "http://www.tripos.com/data/support/mol2.pdf";
-    } //optional
+      return "http://www.tripos.com/data/support/mol2.pdf"; // XXX dead
+    }
 
     const char* GetMIMEType() override
     { return "chemical/x-mol2"; }
@@ -183,7 +183,8 @@ namespace OpenBabel
         if (pConv->IsOption("c", OBConversion::INOPTIONS) != nullptr && EQn(buffer, "###########", 10))
           {
             char attr[32], val[32];
-            sscanf(buffer, "########## %[^:]:%s", attr, val);
+            // CVE-2022-43607: width-limit both specifiers to the buffer size.
+            sscanf(buffer, "########## %31[^:]:%31s", attr, val);
             OBPairData *dd = new OBPairData;
             dd->SetAttribute(attr);
             dd->SetValue(val);
@@ -196,7 +197,7 @@ namespace OpenBabel
 
     // OK, just read MOLECULE line
     int lcount;
-    int natoms,nbonds;
+    int natoms = 0, nbonds = 0;
     bool hasPartialCharges = true;
     for (lcount=0;;lcount++)
       {
@@ -258,6 +259,14 @@ namespace OpenBabel
         return(false);
       }
 
+    if (natoms < 0 || natoms >= 100000000 || nbonds < 0 || nbonds >= 100000000)
+      {
+        mol.EndModify();
+        mol.Clear();
+        obErrorLog.ThrowError(__FUNCTION__, "Unable to read Mol2 format file. Invalid atom or bond count.", obWarning);
+        return(false);
+      }
+
     mol.ReserveAtoms(natoms);
 
     int i;
@@ -275,8 +284,22 @@ namespace OpenBabel
       {
         if (!ifs.getline(buffer,BUFF_SIZE))
           return(false);
-        sscanf(buffer," %*s %1024s %lf %lf %lf %1024s %d %1024s %lf",
-               atmid, &x,&y,&z, temp_type, &resnum, resname, &pcharge);
+        // Required ATOM columns are the atom name, x/y/z and the SYBYL atom
+        // type.  subst_id, subst_name and charge are optional, so reset them
+        // to their defaults each iteration (these locals are declared outside
+        // the loop and would otherwise carry over from the previous atom).
+        resnum = -1;
+        resname[0] = '\0';
+        pcharge = 0.0;
+        isotope = 0;
+        if (sscanf(buffer," %*s %1024s %lf %lf %lf %1024s %d %1024s %lf",
+               atmid, &x,&y,&z, temp_type, &resnum, resname, &pcharge) < 5)
+          {
+            obErrorLog.ThrowError(__FUNCTION__,
+                                  "Unable to read Mol2 format file. Truncated "
+                                  "atom record.", obWarning);
+            return(false);
+          }
 
         atom.SetVector(x, y, z);
         atom.SetFormalCharge(0);
@@ -368,7 +391,7 @@ namespace OpenBabel
           atom.SetFormalCharge((int)pcharge);
         if (!mol.AddAtom(atom))
           return(false);
-        if (!IsNearZero(pcharge))
+        if (fabs(pcharge) >= 2e-6)
           hasPartialCharges = true;
 
         // Add residue information if it exists
@@ -409,8 +432,13 @@ namespace OpenBabel
         int aid = 0, num = 0;
         while (ifs.peek() != '@' && ifs.getline(buffer,BUFF_SIZE))
         {
-          sscanf(buffer,"%d %d",&aid, &num);
-          for(int i = 0; i < num; i++) 
+          // Reset before each parse so a malformed header line cannot reuse
+          // the previous entry's atom id / attribute count.
+          aid = 0;
+          num = 0;
+          if (sscanf(buffer,"%d %d",&aid, &num) < 2)
+            continue;
+          for(int i = 0; i < num; i++)
           {
             if (!ifs.getline(buffer,BUFF_SIZE))
               return(false);
@@ -418,10 +446,11 @@ namespace OpenBabel
             {
               int charge = 0;
               sscanf(buffer,"%*s %d",&charge);
-              if(aid <= mol.NumAtoms()) 
+              if(aid >= 1 && aid <= (int)mol.NumAtoms())
               {
                 OBAtom *atom = mol.GetAtom(aid);
-                atom->SetFormalCharge(charge);
+                if (atom != nullptr)
+                  atom->SetFormalCharge(charge);
               }
             }
           }
@@ -441,7 +470,15 @@ namespace OpenBabel
         if (!ifs.getline(buffer,BUFF_SIZE))
           return(false);
 
-        sscanf(buffer,"%*d %d %d %1024s",&start,&end,temp_type);
+        // origin/target atom ids and the bond type are all required.
+        temp_type[0] = '\0';
+        if (sscanf(buffer,"%*d %d %d %1024s",&start,&end,temp_type) < 3)
+          {
+            obErrorLog.ThrowError(__FUNCTION__,
+                                  "Unable to read Mol2 format file. Truncated "
+                                  "bond record.", obWarning);
+            return(false);
+          }
         str = temp_type;
         unsigned int flags = 0;
         int order;

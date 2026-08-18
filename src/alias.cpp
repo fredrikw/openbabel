@@ -29,8 +29,6 @@ GNU General Public License for more details.
 #include <openbabel/elements.h>
 #include <openbabel/generic.h>
 
-#define MARK_UNUSED(x) (void)(x)
-
 using namespace std;
 namespace OpenBabel
 {
@@ -117,6 +115,8 @@ bool AliasData::FromNameLookup(OBMol& mol, const unsigned int atomindex)
   */
 
   OBAtom* XxAtom = mol.GetAtom(atomindex);
+  if(!XxAtom)
+    return false;
 /*  if(XxAtom->GetExplicitDegree()>1)
   {
     obErrorLog.ThrowError(__FUNCTION__, _alias + " is multivalent, which is currently not supported.", obWarning);
@@ -144,6 +144,9 @@ bool AliasData::FromNameLookup(OBMol& mol, const unsigned int atomindex)
     _right_form = pos->second.right_form;
     _color      = pos->second.color;
   }
+  // Need at least the dummy * plus one real atom to expand the alias.
+  if(obFrag.NumAtoms() < 2)
+    return false;
   obFrag.SetDimension(dimension);//will be same as parent
 
   //Find index of *first* atom to which XxAtom is attached (could be NULL)
@@ -153,8 +156,11 @@ bool AliasData::FromNameLookup(OBMol& mol, const unsigned int atomindex)
   unsigned int firstAttachFlags = 0;
   unsigned int firstAttachOrder = 1;
   if (firstAttachAtom) {
-    firstAttachFlags = mol.GetBond(XxAtom, firstAttachAtom)->GetFlags();
-    firstAttachOrder = mol.GetBond(XxAtom, firstAttachAtom)->GetBondOrder();
+    OBBond* attachBond = mol.GetBond(XxAtom, firstAttachAtom);
+    if (attachBond) {
+      firstAttachFlags = attachBond->GetFlags();
+      firstAttachOrder = attachBond->GetBondOrder();
+    }
   }
   //++Make list of other attachments* of XxAtom
   // (Added later so that the existing bonding of the XXAtom are retained)
@@ -213,7 +219,8 @@ bool AliasData::FromNameLookup(OBMol& mol, const unsigned int atomindex)
 
   //Make a copy of this AliasData object (currently attached to XxAtom)
   //and attach it to the first atom of the fragment.
-  mol.GetAtom(newFragIdx)->CloneData(this);
+  if (OBAtom* newFragAtom = mol.GetAtom(newFragIdx))
+    newFragAtom->CloneData(this);
 
   delete(XxAtom);
   return true;
@@ -399,12 +406,8 @@ public:
 OpGenAlias theOpGenAlias("genalias"); //Global instance
 
 /////////////////////////////////////////////////////////////////
-bool OpGenAlias::Do(OBBase* pOb, const char* OptionText, OpMap* pmap, OBConversion*)
+bool OpGenAlias::Do(OBBase* pOb, const char* /*OptionText*/, OpMap* /*pmap*/, OBConversion*)
 {
-  // Mark variables as unused to avoid warnings
-  MARK_UNUSED(OptionText);
-  MARK_UNUSED(pmap);
-
   OBMol* pmol = dynamic_cast<OBMol*>(pOb);
   if(!pmol)
     return false;

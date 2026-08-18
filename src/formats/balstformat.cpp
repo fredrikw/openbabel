@@ -41,8 +41,9 @@ namespace OpenBabel
         "No comments yet\n";
     }
 
-    const char* SpecificationURL() override
-    { return "http://www.orc.uni-linz.ac.at/mueller/ball_and_stick.shtml"; }
+    const char* SpecificationURL() override {
+      return "http://www.orc.uni-linz.ac.at/mueller/ball_and_stick.shtml"; // XXX dead
+    }
 
     //Flags() can return be any the following combined by | or be omitted if none apply
     // NOTREADABLE  READONEONLY  NOTWRITABLE  WRITEONEONLY
@@ -75,7 +76,7 @@ namespace OpenBabel
     OBMol &mol = *pmol;
     const char* title = pConv->GetTitle();
 
-    int i,natoms;
+    int i, natoms = 0;
     char buffer[BUFF_SIZE];
 
     if (!ifs.getline(buffer,BUFF_SIZE))
@@ -83,6 +84,8 @@ namespace OpenBabel
     if (!ifs.getline(buffer,BUFF_SIZE))
       return(false);
     sscanf(buffer,"%d",&natoms);
+    if (natoms < 1 || natoms >= 100000000)
+      return(false);
     mol.ReserveAtoms(natoms);
     mol.BeginModify();
 

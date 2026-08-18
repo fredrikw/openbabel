@@ -75,7 +75,7 @@ public:
     /// I couldn't find it but close enough.
     const char* SpecificationURL() override
     {
-        return "http://www.cmbi.ru.nl/molden/molden_format.html";
+        return "https://www.theochem.ru.nl/molden/molden_format.html";
     }
 
     /// Return MIME type, NULL in this case.
@@ -88,7 +88,7 @@ public:
     }
 
     /// Skip to object: used for multi-object file formats.
-    int SkipObjects(int n, OpenBabel::OBConversion* pConv) override { return 0; }
+    int SkipObjects(int /*n*/, OpenBabel::OBConversion* /*pConv*/) override { return 0; }
 
     /// Read.
     bool ReadMolecule(OpenBabel::OBBase* pOb, OpenBabel::OBConversion* pConv) override;
@@ -150,11 +150,16 @@ bool OBMoldenFormat::ReadMolecule( OBBase* pOb, OBConversion* pConv )
               atomicNumber = OBElements::GetAtomicNum(atomName.c_str());
               atom->SetAtomicNum( atomicNumber );
               atom->SetVector( x * factor, y * factor, z * factor );
-              if (atomicNumber-valenceCharge!=0){
+              // valenceCharge is read from the file and may be any int value,
+              // so compute the difference in a wider type to avoid signed
+              // integer overflow (e.g. atomicNumber - INT_MIN).
+              long long ecpDiff =
+                static_cast<long long>(atomicNumber) - valenceCharge;
+              if (ecpDiff != 0){
                 OBPairData* ecpData = new OBPairData();
                 ecpData->SetAttribute("ecp");
                 std::ostringstream os;
-                os << atomicNumber-valenceCharge;
+                os << ecpDiff;
                 ecpData->SetValue(os.str());
                 atom->SetData(ecpData);
                 ++ecpLines;
@@ -171,13 +176,13 @@ bool OBMoldenFormat::ReadMolecule( OBBase* pOb, OBConversion* pConv )
               if( lineBuffer.find( "[" ) != string::npos ) break;
 
               // should give us a number of atoms (i.e., this is an XYZ-format file)
-              unsigned int natoms;
+              unsigned int natoms = 0;
               bool createAtoms = false;
 
-              if (sscanf(lineBuffer.c_str(), "%d", &natoms) == 0 || !natoms) {
+              if (sscanf(lineBuffer.c_str(), "%u", &natoms) == 0 || !natoms || natoms >= 100000000) {
                 obErrorLog.ThrowError(__FUNCTION__,
                                       "Problems reading an XYZ geometry: The first line must contain the number of atoms.", obWarning);
-//                return(false);
+                break;
               }
               if (pmol->NumAtoms() != 0 && pmol->NumAtoms() != natoms) {
                 obErrorLog.ThrowError(__FUNCTION__,
@@ -221,6 +226,12 @@ bool OBMoldenFormat::ReadMolecule( OBBase* pOb, OBConversion* pConv )
                     // i.e., the first column is the atomic number, not a symbol
                     // so we'll try to convert this to an element number
                     atomicNum = atoi(vs[0].c_str());
+                    // guard against garbage input: SetAtomicNum truncates to a
+                    // byte, so an out-of-range value would silently become the
+                    // wrong element. Treat anything outside 1..118 as unknown.
+                    if (atomicNum < 1 ||
+                        atomicNum > static_cast<int>(OBElements::Oganesson))
+                      atomicNum = 0;
                   }
 
                   OBAtom* atom = pmol->NewAtom();
@@ -328,16 +339,24 @@ bool OBMoldenFormat::ReadMolecule( OBBase* pOb, OBConversion* pConv )
       pmol->SetEnergies(energies);
 
     if (conformers.size() > 0) {
+      unsigned int natoms = pmol->NumAtoms();
       for (unsigned int i = 0; i < conformers.size(); ++i) {
-        double *confCoord = new double [3*pmol->NumAtoms()];
+        double *confCoord = new double [3*natoms];
         vector<vector3> coordinates = conformers[i];
-        if (coordinates.size() != pmol->NumAtoms())
+        if (coordinates.size() != natoms)
           cerr << " Wrong number of coordinates! " << endl;
-        for (unsigned int a = 0; a < coordinates.size(); ++a) {
+        // A [GEOMETRIES] block may declare a different atom count than the
+        // molecule (the reader only warns above). Never write past confCoord
+        // when there are too many coordinates, and zero-fill any shortfall so
+        // the conformer is fully initialized when there are too few.
+        unsigned int n = coordinates.size() < natoms ? coordinates.size() : natoms;
+        for (unsigned int a = 0; a < n; ++a) {
           confCoord[3*a] = coordinates[a].x();
           confCoord[3*a+1] = coordinates[a].y();
           confCoord[3*a+2] = coordinates[a].z();
         } // finished atoms
+        for (unsigned int a = n; a < natoms; ++a)
+          confCoord[3*a] = confCoord[3*a+1] = confCoord[3*a+2] = 0.0;
         pmol->AddConformer(confCoord);
       } // finished iteration through conformers
       pmol->SetConformer(pmol->NumConformers());

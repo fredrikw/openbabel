@@ -1,4 +1,4 @@
-"""Test OpenBabel executables from Python
+r"""Test OpenBabel executables from Python
 
 Note: Python bindings not used
 
@@ -23,7 +23,7 @@ class TestUnique(BaseTest):
 
     def setUp(self):
         self.canFindExecutable("obabel")
-        self.smiles = """C	methane
+        self.smiles = r"""C	methane
 COC	dimethyl ether
 OC(C)CC	2-butanol
 O[C@H](C)CC	R-2-butanol
@@ -49,7 +49,7 @@ C([2H])([2H])([2H])[2H]	deuteromethane"""
 
         for param in params:
             output, error = run_exec(self.smiles,
-                                     "obabel -ismi -osmi --unique %s" % param[0])
+                                     ["obabel", "-ismi", "-osmi", "--unique", param[0]])
             self.assertConverted(error, param[1])
 
 if __name__ == "__main__":

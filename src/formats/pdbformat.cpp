@@ -180,15 +180,23 @@ namespace OpenBabel
 
         // crystal cells
         if (EQn(buffer,"CRYST1",6)) {
-          float a, b, c, alpha, beta, gamma;
+          float a = 0, b = 0, c = 0, alpha = 0, beta = 0, gamma = 0;
           string group = "";
 
-          sscanf (&(buffer[6]), "%9f%9f%9f%7f%7f%7f", &a, &b, &c,
-                  &alpha, &beta, &gamma);
-          buffer[66] = '\0';
-          group += &(buffer[55]);
-          Trim (group);
-          fixRhombohedralSpaceGroupReader(group);
+          // The six cell parameters are required; skip a malformed/truncated
+          // CRYST1 record rather than build a unit cell from stale values.
+          if (sscanf (&(buffer[6]), "%9f%9f%9f%7f%7f%7f", &a, &b, &c,
+                      &alpha, &beta, &gamma) != 6)
+            continue;
+          // The space group occupies columns 56-66 and is optional; only read
+          // it when the line is long enough, otherwise we would index past the
+          // end of the record into stale buffer memory.
+          if (strlen(buffer) > 66) {
+            buffer[66] = '\0';
+            group += &(buffer[55]);
+            Trim (group);
+            fixRhombohedralSpaceGroupReader(group);
+          }
 
           OBUnitCell *pCell=new OBUnitCell;
           pCell->SetOrigin(fileformatInput);
@@ -514,8 +522,9 @@ namespace OpenBabel
 
     unsigned int i;
     char buffer[BUFF_SIZE];
-    char type_name[10], padded_name[10];
-    char the_res[10];
+    char type_name[10] = {0,}, padded_name[10] = {0,};
+    char the_res[10] = {0,};
+    char segname[10] = {0,};
     char the_chain = ' ';
     const char *element_name;
     int res_num;
@@ -688,6 +697,8 @@ namespace OpenBabel
             snprintf(type_name,5,"%s",(char*)res->GetAtomID(atom).c_str());
             the_chain = res->GetChain();
 
+            snprintf(segname,5,"%s", (char*)res->GetSegName().c_str());
+
             //two char. elements are on position 13 and 14 one char. start at 14
             if (strlen(OBElements::GetSymbol(atom->GetAtomicNum())) == 1)
               {
@@ -724,6 +735,7 @@ namespace OpenBabel
             type_name[4] = '\0';
             res_num = 1;
             the_insertioncode=' ';
+            strcpy(segname,"    ");
           }
 
         element_name = OBElements::GetSymbol(atom->GetAtomicNum());
@@ -745,7 +757,7 @@ namespace OpenBabel
          occup = occup_fp->GetGenericValue();
         }
 
-        snprintf(buffer, BUFF_SIZE, "%s%5d %-4s %-3s %c%4d%c   %8.3f%8.3f%8.3f%6.2f  0.00          %2s%2s\n",
+        snprintf(buffer, BUFF_SIZE, "%s%5d %-4s %-3s %c%4d%c   %8.3f%8.3f%8.3f%6.2f  0.00      %4s%2s%2s\n",
                  het?"HETATM":"ATOM  ",
                  i,
                  type_name,
@@ -757,6 +769,7 @@ namespace OpenBabel
                  atom->GetY(),
                  atom->GetZ(),
                  occup,
+                 segname,
                  element_name,
                  scharge);
         ofs << buffer;
@@ -911,6 +924,15 @@ namespace OpenBabel
     /* insertion code */
     char insertioncode = sbuf.substr(27-6-1,1)[0];
     if (' '==insertioncode) insertioncode=0;
+
+    /* segname */
+    string segname;
+    if (sbuf.size() > 67) {
+      segname = sbuf.substr(66,4);
+      if(segname == "    ") { //unset should be empty string
+        segname = string();
+      }     
+    }
     /* element */
     string element = "  ";
     if (sbuf.size() > 71)
@@ -1033,7 +1055,7 @@ namespace OpenBabel
               type = atmid.substr(0,1);
           } else if (atmid[0] == ' ')
             type = atmid.substr(1,1); // one char element
-          else
+          else if (atmid.size() > 1)
             type = atmid.substr(1,2);
 
           // Some cleanup steps
@@ -1129,14 +1151,16 @@ namespace OpenBabel
         || res->GetName() != resname
         || res->GetNumString() != resnum
         || res->GetChain() != chain
-        || res->GetInsertionCode() != insertioncode)
+        || res->GetInsertionCode() != insertioncode
+        || res->GetSegName() != segname)
       {
         vector<OBResidue*>::iterator ri;
         for (res = mol.BeginResidue(ri) ; res ; res = mol.NextResidue(ri))
           if (res->GetName() == resname
               && res->GetNumString() == resnum
               && static_cast<int>(res->GetChain()) == chain
-              && static_cast<int>(res->GetInsertionCode()) == insertioncode) {
+              && static_cast<int>(res->GetInsertionCode()) == insertioncode
+              && res->GetSegName() == segname) {
             if (insertioncode) fprintf(stderr,"I: identified residue wrt insertion code: '%c'\n",insertioncode);
             break;
           }
@@ -1147,6 +1171,7 @@ namespace OpenBabel
           res->SetName(resname);
           res->SetNum(resnum);
           res->SetInsertionCode(insertioncode);
+          res->SetSegName(segname);
         }
       }
 

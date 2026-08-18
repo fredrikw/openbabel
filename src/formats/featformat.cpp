@@ -77,10 +77,12 @@ namespace OpenBabel
     mol.SetTitle( pConv->GetTitle()); //default title is the filename
 
     char buffer[BUFF_SIZE];
-    int i,natoms;
+    int i, natoms = 0;
 
     ifs.getline(buffer,BUFF_SIZE);
     sscanf(buffer,"%d",&natoms);
+    if (natoms < 1 || natoms >= 100000000)
+      return(false);
 
     mol.ReserveAtoms(natoms);
     mol.BeginModify();
@@ -96,11 +98,15 @@ namespace OpenBabel
       {
         if (!ifs.getline(buffer,BUFF_SIZE))
           return(false);
-        sscanf(buffer,"%30s %lf %lf %lf",
+        // Atom type and x/y/z are all required; reject a truncated record
+        // rather than building an atom from stale stack values.
+        type[0] = '\0';
+        if (sscanf(buffer,"%30s %lf %lf %lf",
                type,
                &x,
                &y,
-               &z);
+               &z) != 4)
+          return(false);
         CleanAtomType(type);
         atom = mol.NewAtom();
         atom->SetVector(x,y,z);

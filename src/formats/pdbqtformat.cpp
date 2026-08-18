@@ -97,8 +97,9 @@ namespace OpenBabel
       "  n  Preserve atom names\n\n";
     }
 
-    const char* SpecificationURL() override
-      { return "http://autodock.scripps.edu/faqs-help/faq/what-is-the-format-of-a-pdbqt-file"; }
+    const char* SpecificationURL() override {
+      return "http://autodock.scripps.edu/faqs-help/faq/what-is-the-format-of-a-pdbqt-file"; // XXX dead
+    }
 
     const char* GetMIMEType() override
       { return "chemical/x-pdbqt"; }
@@ -117,7 +118,7 @@ namespace OpenBabel
 
   ////////////////////////////////////////////////////
   /// Utility functions
-  static bool parseAtomRecord(char *buffer, OBMol & mol, int chainNum);
+  static bool parseAtomRecord(char *buffer, OBMol & mol, int /*chainNum*/);
   static bool IsRotBond_PDBQT(OBBond * the_bond);
   static bool IsIn(const vector<int>& vec, const int num);
   static void OutputAtom(OBAtom* atom, ostream& ofs, unsigned int index);
@@ -126,7 +127,7 @@ namespace OpenBabel
   static bool FindBondedPiece(const vector<int>& root, const vector<int>& branch, unsigned int& root_atom, unsigned int& branch_atom,
                 unsigned int& root_atom_rank, unsigned int& branch_atom_rank, const OBMol& mol, unsigned int & atoms_moved);
   static bool OutputTree(OBConversion *pConv, OBMol& mol, ostream& ofs, map <unsigned int, branch >& tree, unsigned int depth, bool moves_many, bool preserve_original_index);
-  static void ConstructTree (map <unsigned int, branch >& tree, vector <vector <int> > rigid_fragments, unsigned int root_piece, const OBMol& mol, bool flexible);
+  static void ConstructTree(map <unsigned int, branch>& tree, vector<vector<int>> rigid_fragments, unsigned int root_piece, const OBMol& mol, bool /*flexible*/);
   static bool DeleteHydrogens(OBMol & mol);
   static bool Separate_preserve_charges(OBMol & mol, vector<OBMol> & result);
   static unsigned int FindFragments(OBMol mol, vector <vector <int> >& rigid_fragments);
@@ -398,12 +399,12 @@ namespace OpenBabel
     {
       if (!isalnum(element_name[0])) {element_name_final[0]=' ';}
       else element_name_final[0]=element_name[0];
-      if (!isalnum(element_name[1])) {element_name_final[1]=' ';}
+      if (element_name[0] == '\0' || !isalnum(element_name[1])) {element_name_final[1]=' ';}
       else element_name_final[1]=element_name[1];
     }
 
     double charge = atom->GetPartialCharge();
-    snprintf(buffer, BUFF_SIZE, "%s%5d %-4s %-3s %c%4d%c   %8.3f%8.3f%8.3f  0.00  0.00  %+8.3f %-2.2s",
+    snprintf(buffer, BUFF_SIZE, "%s%5d %-4s %-3s %c%4d%c   %8.3f%8.3f%8.3f  1.00  0.00  %+8.3f %-2.2s",
       het?"HETATM":"ATOM  ",
       index,
       type_name,
@@ -612,7 +613,7 @@ namespace OpenBabel
     return true;
   }
 
-  void ConstructTree (map <unsigned int, branch>& tree, vector <vector <int> > rigid_fragments, unsigned int root_piece, const OBMol& mol, bool flexible)
+  void ConstructTree(map <unsigned int, branch>& tree, vector<vector<int>> rigid_fragments, unsigned int root_piece, const OBMol& mol, bool /*flexible*/)
   {
     unsigned int first_atom = 0;
     unsigned int second_atom = 0;
@@ -894,7 +895,46 @@ namespace OpenBabel
           ofs << buffer << endl;
         }
         ofs << "REMARK  Name = " << mol.GetTitle(true) << endl;
-//        ofs << "USER    Name = " << mol.GetTitle(true) << endl;
+        std::vector<OBGenericData*> pairData = mol.GetAllData(OBGenericDataType::PairData);
+        for (std::vector<OBGenericData*>::iterator data = pairData.begin(); data != pairData.end(); ++data) {
+          OBPairData *pd = static_cast<OBPairData*>(*data);
+          string attr = pd->GetAttribute();
+
+          // filter to make sure we are writing pdb fields only
+          if (attr != "HEADER" && attr != "OBSLTE" && attr != "TITLE" && attr != "SPLIT" &&
+              attr != "CAVEAT" && attr != "COMPND" && attr != "SOURCE" && attr != "KEYWDS" &&
+              attr != "EXPDTA" && attr != "NUMMDL" && attr != "MDLTYP" && attr != "AUTHOR" &&
+              attr != "REVDAT" && attr != "SPRSDE" && attr != "JRNL" && attr != "REMARK" &&
+              attr != "DBREF" && attr != "DBREF1" && attr != "DBREF2" && attr != "SEQADV" &&
+              attr != "SEQRES" && attr != "MODRES" && attr != "HET" && attr != "HETNAM" &&
+              attr != "HETSYN" && attr != "FORMUL" && attr != "HELIX" && attr != "SHEET" &&
+              attr != "SSBOND" && attr != "LINK" && attr != "CISPEP" && attr != "SITE" &&
+              attr != "ORIGX1" && attr != "ORIGX2" && attr != "ORIGX3" && attr != "SCALE1" &&
+              attr != "SCALE2" && attr != "SCALE3" && attr != "MATRIX1" && attr != "MATRIX2" &&
+              attr != "MATRIX3" && attr != "MODEL")
+            continue;
+
+          // compute spacing needed. HELIX, SITE, HET, ... are trimmed when reading
+          int nSpacing = 6 - attr.size();
+          for (int i = 0; i < nSpacing; ++i)
+            attr += " ";
+
+
+          std::string lines = pd->GetValue();
+          string::size_type last = 0;
+          string::size_type pos = lines.find('\n');
+          while (last != string::npos) {
+            string line = lines.substr(last, pos - last);
+            if (pos == string::npos)
+              last = string::npos;
+            else
+              last = pos + 1;
+            pos = lines.find('\n', last);
+
+            ofs << attr << line << endl;
+          }
+        }
+
         if (!(pConv->IsOption("r",OBConversion::OUTOPTIONS)))
         {
           char type_name[10];
@@ -1056,7 +1096,7 @@ namespace OpenBabel
 
   /////////////////////////////////////////////////////////////////////////
 
-  static bool parseAtomRecord(char *buffer, OBMol &mol,int chainNum)
+  static bool parseAtomRecord(char *buffer, OBMol &mol, int /*chainNum*/)
   /* ATOMFORMAT "(i5,1x,a4,a1,a3,1x,a1,i4,a1,3x,3f8.3,2f6.2,a2,a2)" */
   {
     string sbuf = &buffer[6];

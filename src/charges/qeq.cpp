@@ -16,7 +16,7 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 ***********************************************************************/
 
-#ifdef HAVE_EIGEN
+#ifdef HAVE_EIGEN3
 
 #include "qeq.h"
 #include <openbabel/locale.h>
@@ -26,12 +26,6 @@ GNU General Public License for more details.
 #include <openbabel/obiter.h>
 
 using namespace std;
-
-#if defined(_MSC_VER) && _MSC_VER < 1800
-// Older MSVC doesn't have error function erf, use local implementation
-#include <openbabel/math/erf.h>
-using temperf::erf;
-#endif
 
 namespace OpenBabel
 {
@@ -157,7 +151,7 @@ namespace OpenBabel
   }
 
   //!Returns a triple of numbers: electronegativity (in eV), hardness (in eV), and Gaussian exponent (in bohr^-2)
-  Eigen::Vector3d QEqCharges::GetParameters(unsigned int Z, int Q)
+  Eigen::Vector3d QEqCharges::GetParameters(unsigned int Z, int /*Q*/)
   {
     Eigen::Vector3d P;
     //For now, completely ignore the formal charge
@@ -309,12 +303,8 @@ namespace OpenBabel
   bool QEqCharges::solver(Eigen::MatrixXd A, Eigen::VectorXd b, Eigen::VectorXd &x, const double NormThreshold)
   {
     // using a LU factorization
-#ifdef HAVE_EIGEN3
     bool SolverOK = true;
     x = A.partialPivLu().solve(b);
-#else
-    bool SolverOK = A.lu().solve(b, &x);
-#endif
     //bool SolverOK = A.svd().solve(b, &x);
 
     Eigen::VectorXd resid = A*x - b;
@@ -332,11 +322,7 @@ namespace OpenBabel
 
         obErrorLog.ThrowError(__FUNCTION__, msg.str(), obWarning);
 
-#ifdef HAVE_EIGEN3
         x = A.jacobiSvd().solve(b);
-#else
-        SolverOK = A.svd().solve(b, &x);
-#endif
         resid = A*x - b;
         resnorm = resid.norm();
 
@@ -362,7 +348,7 @@ namespace OpenBabel
 
 }//namespace
 
-#endif //HAVE_EIGEN2
+#endif // HAVE_EIGEN3
 
 //! \file qeq.cpp
 //! \brief Assign QEq partial charges.

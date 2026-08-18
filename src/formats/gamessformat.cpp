@@ -56,7 +56,7 @@ namespace OpenBabel {
 
       // Optional
       const char* SpecificationURL() override {
-        return "http://www.msg.ameslab.gov/GAMESS/doc.menu.html";
+        return "https://www.msg.chem.iastate.edu/gamess/documentation.html";
       }
 
       const char* GetMIMEType() override {
@@ -103,7 +103,7 @@ namespace OpenBabel {
 
       // Optional
       const char* SpecificationURL() override {
-        return "http://www.msg.ameslab.gov/GAMESS/doc.menu.html";
+        return "https://www.msg.chem.iastate.edu/gamess/documentation.html";
       }
 
       const char* GetMIMEType() override {
@@ -259,12 +259,14 @@ namespace OpenBabel {
 
       if (strstr(buffer, "ICHARG=")) {
         tokenize(vs, (strstr(buffer, "ICHARG=")));
-        charge=atoi(vs[1].c_str());
+        if (vs.size() >= 2)
+          charge = atoi(vs[1].c_str());
       }
 
       if (strstr(buffer, "MULT ")) {
         tokenize(vs, (strstr(buffer, "MULT ")));
-        mult=atoi(vs[2].c_str());
+        if (vs.size() >= 3)
+          mult = atoi(vs[2].c_str());
       }
 
       if (strstr(buffer, "ATOMIC                      COORDINATES (BOHR)") != nullptr) {
@@ -292,17 +294,25 @@ namespace OpenBabel {
        }
        // Done with reading atoms
        natoms = mol.NumAtoms();
-       // malloc / memcpy
-       double* tmpCoords = new double [(natoms)*3];
-       memcpy(tmpCoords, &coordinates[0], sizeof(double)*natoms*3);
-       vconf.push_back(tmpCoords);
-       coordinates.clear();
-       confDimensions.push_back(3); // always 3D -- OBConformerData allows mixing 2D and 3D structures
 
-      } else if (strstr(buffer, "MULTIPOLE COORDINATES, ELECTRONIC AND NUCLEAR CHARGES") != nullptr) {
+        // Only store a conformer when we have a full set of coordinates;
+       // a malformed block may yield fewer (or no) atoms than expected.
+       if (natoms > 0 && coordinates.size() >= static_cast<size_t>(natoms) * 3) {
+         // malloc / memcpy
+         double* tmpCoords = new double [(natoms)*3];
+         memcpy(tmpCoords, &coordinates[0], sizeof(double)*natoms*3);
+         vconf.push_back(tmpCoords);
+         confDimensions.push_back(3); // always 3D -- OBConformerData allows mixing 2D and 3D structures
+       }
+       coordinates.clear();
+
+      } else if (strstr(buffer, "MULTIPOLE COORDINATES, ELECTRONIC AND NUCLEAR CHARGES") != nullptr
+                 && !vconf.empty() && natoms > 0) {
         /*This set of EFP coordinates belongs only to the
          * conformer directly above this (ATOMIC   COORDINATES (BOHR))
          */
+        if (vconf.empty()) // no preceding coordinate block to attach to
+          continue;
         double* tmpCoords = vconf.at(0);
         for (int i=0; i < natoms*3; i++)
           coordinates.push_back(tmpCoords[i]);
@@ -387,6 +397,8 @@ namespace OpenBabel {
               char delim[] = "=";
               tokenize(vs2, buffer, delim);
             } else {
+              if (vs.size() < 4)
+                break;
               /* For the included EFP1 potentials,
                * the atom name may start with "Z"
                */
@@ -416,12 +428,17 @@ namespace OpenBabel {
 
         // Done with reading atoms
         natoms = mol.NumAtoms();
-        // malloc / memcpy
-        double* tmpCoords = new double [(natoms)*3];
-        memcpy(tmpCoords, &coordinates[0], sizeof(double)*natoms*3);
-        vconf.push_back(tmpCoords);
+
+        // Only store a conformer when we have a full set of coordinates;
+        // a malformed block may yield fewer (or no) atoms than expected.
+        if (natoms > 0 && coordinates.size() >= static_cast<size_t>(natoms) * 3) {
+          // malloc / memcpy
+          double* tmpCoords = new double [(natoms)*3];
+          memcpy(tmpCoords, &coordinates[0], sizeof(double)*natoms*3);
+          vconf.push_back(tmpCoords);
+          confDimensions.push_back(3); // always 3D -- OBConformerData allows mixing 2D and 3D structures
+        }
         coordinates.clear();
-        confDimensions.push_back(3); // always 3D -- OBConformerData allows mixing 2D and 3D structures
 
       } else if (strstr(buffer, "NSERCH=") != nullptr && strstr(buffer, "ENERGY=") != nullptr) {
         char* tok = strtok(buffer, " ="); // my tokenize
@@ -466,6 +483,8 @@ namespace OpenBabel {
         tokenize(vs, buffer);
         while (vs.size() == 4) {
           atom = mol.GetAtom(atoi(vs[0].c_str()));
+          if (!atom)
+            break;
           atom->SetPartialCharge(atof(vs[2].c_str()));
 
           if (!ifs.getline(buffer, BUFF_SIZE))
@@ -484,6 +503,8 @@ namespace OpenBabel {
           if (!atomNb)
             break;
           atom = mol.GetAtom(atomNb);
+          if (!atom)
+            break;
           atom->SetPartialCharge(atof(vs[3].c_str()));
 
           if (!ifs.getline(buffer, BUFF_SIZE))
@@ -546,7 +567,12 @@ namespace OpenBabel {
 
         // Now real work -- read displacements
         unsigned int prevModeCount = displacements.size();
-        unsigned int newModes = frequencies.size() - displacements.size();
+        // Guard against unsigned underflow on malformed input: if there are
+        // fewer frequencies than displacements already stored, the subtraction
+        // would wrap to a huge value and the loop below would exhaust memory.
+        unsigned int newModes = 0;
+        if (frequencies.size() > displacements.size())
+          newModes = frequencies.size() - displacements.size();
         vector<vector3> displacement;
         for (unsigned int i=0; i < newModes; ++i) {
           displacements.push_back(displacement);
@@ -560,6 +586,8 @@ namespace OpenBabel {
         while (modeCount >= 1) {
           // 1/sqrt(atomic mass)
           atom = mol.GetAtom(atoi(vs[0].c_str()));
+          if (!atom)
+            break;
           massNormalization = 1 / sqrt( atom->GetAtomicMass() );
 
           x.clear();
@@ -892,8 +920,14 @@ namespace OpenBabel {
           tokenize(vs, buffer);
           if (vs.size() == 5) {
             atom = mol.NewAtom();
-            // Parse the current one
-            atom->SetAtomicNum(atoi(vs[1].c_str()));
+            // Parse the current one. Clamp to a valid element range: an
+            // out-of-range value would be truncated to a byte by SetAtomicNum
+            // and silently become the wrong element.
+            int atomicNum = atoi(vs[1].c_str());
+            if (atomicNum < 1 ||
+                atomicNum > static_cast<int>(OBElements::Oganesson))
+              atomicNum = 0;
+            atom->SetAtomicNum(atomicNum);
             x = atof((char*) vs[2].c_str());
             y = atof((char*) vs[3].c_str());
             z = atof((char*) vs[4].c_str());
@@ -910,7 +944,12 @@ namespace OpenBabel {
           tokenize(vs, buffer);
           if (vs.size() == 5) {
             atom = mol.NewAtom();
-            atom->SetAtomicNum(atoi(vs[1].c_str()));
+            // Clamp to a valid element range (see note above).
+            int atomicNum = atoi(vs[1].c_str());
+            if (atomicNum < 1 ||
+                atomicNum > static_cast<int>(OBElements::Oganesson))
+              atomicNum = 0;
+            atom->SetAtomicNum(atomicNum);
             x = atof((char*) vs[2].c_str());
             y = atof((char*) vs[3].c_str());
             z = atof((char*) vs[4].c_str());
@@ -1014,18 +1053,18 @@ namespace OpenBabel {
       defaultKeywords = keywords;
 
     if (keywordsEnable) {
-      OBSetData* gmsset = (OBSetData*) pmol->GetData("gamess");
+      OBSetData* gmsset = dynamic_cast<OBSetData*>(pmol->GetData("gamess"));
 
       if (gmsset) {
         for (i=gmsset->GetBegin(); i != gmsset->GetEnd(); ++i) {
-          OBSetData* cset = (OBSetData*) (*i);
+          OBSetData* cset = dynamic_cast<OBSetData*>(*i);
 
           if (cset) {
             wrapped = false;
             a = 2 + cset->GetAttribute().length();
             ofs << " $" << cset->GetAttribute();
             for (j=cset->GetBegin(); j != cset->GetEnd(); ++j) {
-              OBPairData* pd = (OBPairData*) (*j);
+              OBPairData* pd = dynamic_cast<OBPairData*>(*j);
 
               if (pd) {
                 if (a + 2 + pd->GetAttribute().length() + pd->GetValue().length() > 72) {

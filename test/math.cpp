@@ -51,7 +51,11 @@ GNU General Public License for more details.
 using namespace std;
 using namespace OpenBabel;
 
+#if !OB_USE_OBRANDOMMT
 OBRandom randomizer;
+#else
+OBRandomMT randomizer{};
+#endif
 int testCount = 0;
 int failedCount = 0;
 char currentFunc [256];
@@ -72,7 +76,7 @@ void verify_not_ok( const char *expr, int line )
 
 void pickRandom( double & d )
 {
-  d = randomizer.NextFloat() * 2.0 - 1.0;
+  d = randomizer.UniformReal(-1.0, 1.0);
 }
 
 void pickRandom( vector3 & v )
@@ -182,23 +186,23 @@ void testBasics_matrix3x3()
   m3 = matrix3x3(e);
   VERIFY( compare( m2, m3 ) );
 
-  // test const operator() and Get()
+  // test const operator()
   for( i = 0; i < 3; i++ )
     for( j = 0; j < 3; j++ )
     {
       VERIFY( compare( static_cast<const matrix3x3>(m2)(i,j), e[i][j] ) );
-      x = m2.Get( i, j );
+      x = m2(i, j);
       VERIFY( compare( x, e[i][j] ) );
     }
 
-  // test non-const operator() and Set()
+  // test non-const operator()
   for( i = 0; i < 3; i++ )
     for( j = 0; j < 3; j++ )
       m1(i,j) = m2(i,j);
   VERIFY( compare( m1, m2 ) );
   for( i = 0; i < 3; i++ )
     for( j = 0; j < 3; j++ )
-      m3.Set(i,j, m2(i,j) );
+      m3(i,j) = m2(i,j);
   VERIFY( compare( m3, m2 ) );
 
   // test SetColumn(), GetColumn(), SetRow(), GetRow(), transpose()
@@ -322,10 +326,10 @@ void testEigenvalues()
   matrix3x3 Diagonal;
   for(int i=0; i<3; i++)
     for(int j=0; j<3; j++)
-      Diagonal.Set(i, j, 0.0);
-  Diagonal.Set(0, 0, randomizer.NextFloat());
-  Diagonal.Set(1, 1, Diagonal.Get(0,0)+fabs(randomizer.NextFloat()));
-  Diagonal.Set(2, 2, Diagonal.Get(1,1)+fabs(randomizer.NextFloat()));
+      Diagonal(i, j) = 0.0;
+  Diagonal(0, 0) = randomizer.UniformReal(0.0, 1.0);
+  Diagonal(1, 1) = Diagonal(0,0) + randomizer.UniformReal(0.0, 1.0);
+  Diagonal(2, 2) = Diagonal(1,1) + randomizer.UniformReal(0.0, 1.0);
 
   // test the isDiagonal() method
   VERIFY( Diagonal.isDiagonal() );
@@ -343,7 +347,7 @@ void testEigenvalues()
   toDiagonalize.findEigenvectorsIfSymmetric(eigenvals);
   
   for(unsigned int j=0; j<3; j++)
-    VERIFY( IsNegligible( eigenvals[j] - Diagonal.Get(j,j), Diagonal.Get(2,2) ) );
+    VERIFY( IsNegligible( eigenvals[j] - Diagonal(j,j), Diagonal(2,2) ) );
   
   VERIFY( eigenvals[0] < eigenvals[1] &&  eigenvals[1] < eigenvals[2] );
 }
@@ -357,9 +361,9 @@ void testEigenvectors()
 {
   matrix3x3 rnd;
   pickRandom( rnd );
-  rnd.Set(0,1, rnd.Get(1,0));
-  rnd.Set(0,2, rnd.Get(2,0));
-  rnd.Set(1,2, rnd.Get(2,1));
+  rnd(0,1) = rnd(1,0);
+  rnd(0,2) = rnd(2,0);
+  rnd(1,2) = rnd(2,1);
   vector3 eigenvals;
   matrix3x3 eigenvects = rnd.findEigenvectorsIfSymmetric(eigenvals);
   
@@ -373,7 +377,7 @@ void testEigenvectors()
   VERIFY( shouldBeDiagonal.isDiagonal() );
   
   for(unsigned int j=0; j<3; j++)
-    VERIFY( compare( shouldBeDiagonal.Get(j,j), eigenvals[j] ) );
+    VERIFY( compare( shouldBeDiagonal(j,j), eigenvals[j] ) );
   
   for(unsigned int i=0; i<3; i++ )
     {
@@ -397,7 +401,7 @@ int math(int argc, char* argv[])
   
   cout << "# math: repeating each test " << REPEAT << " times" << endl;
   
-  randomizer.TimeSeed();
+  randomizer.Reset();
 
   cout << "# Testing MMFF94 Force Field..." << endl;
   switch(choice) {

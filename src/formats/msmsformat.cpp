@@ -70,7 +70,7 @@ public:
     /// I couldn't find it but close enough.
     const char* SpecificationURL() override
     {
-        return "http://www.scripps.edu/~sanner";
+        return "http://www.scripps.edu/~sanner"; // XXX dead
     }
 
     /// Return MIME type, NULL in this case.
@@ -83,7 +83,7 @@ public:
     }
 
     /// Skip to object: used for multi-object file formats.
-    int SkipObjects(int n, OpenBabel::OBConversion* pConv) override { return 0; }
+    int SkipObjects(int /*n*/, OpenBabel::OBConversion* /*pConv*/) override { return 0; }
 
     /// Read: always return false.
     bool ReadMolecule(OpenBabel::OBBase*, OpenBabel::OBConversion*) override

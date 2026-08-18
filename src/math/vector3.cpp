@@ -27,6 +27,10 @@ GNU General Public License for more details.
 #include "../rand.h"
 #include <openbabel/obutil.h>
 
+#ifndef OB_USE_IMPROVED_RANDOM_UNIT_VECTOR
+#define OB_USE_IMPROVED_RANDOM_UNIT_VECTOR (OB_VERSION >= OB_VERSION_CHECK(4, 0, 0))
+#endif
+
 using namespace std;
 
 namespace OpenBabel
@@ -67,43 +71,49 @@ namespace OpenBabel
   */
   double vector3::operator[] ( unsigned int i) const
   {
-#ifdef OB_OLD_MATH_CHECKS
-    if (i > 2)
-      {
-        cerr << "ERROR in OpenBabel::vector3::operator[]" << endl
-             << "The method has been called with an illegal index i=" << i << "." << endl
+    switch (i) {
+      case 0u:
+        return _vx;
+      case 1u:
+        return _vy;
+      case 2u:
+        return _vz;
+      default:
+        cerr << "ERROR in OpenBabel::vector3::operator[]\n"
+             << "The method has been called with an illegal index i=" << i << ".\n"
              << "Please contact the author of the offending program immediately." << endl;
         return 0.0;
-      }
-#endif
-    if (i == 0)
-      return _vx;
-    if (i == 1)
-      return _vy;
-    else return _vz;
+    }
   }
 
   /*! Replaces *this with a random unit vector, which is (supposed
-    to be) uniformly distributed over the unit sphere. Uses the
-    system number generator with a time seed.
-
+    to be) uniformly distributed over the unit sphere.
   */
   void vector3::randomUnitVector()
   {
-    OBRandom *ptr;
+#if !OB_USE_OBRANDOMMT
     static OBRandom singleRand(true);
-    ptr = &singleRand;
+#else
+    static OBRandomMT singleRand{};
+#endif
 
+#if !OB_USE_IMPROVED_RANDOM_UNIT_VECTOR
     // obtain a random vector with 0.001 <= length^2 <= 1.0, normalize
     // the vector to obtain a random vector of length 1.0.
     double l;
     do
       {
-        this->Set(ptr->NextFloat()-0.5, ptr->NextFloat()-0.5, ptr->NextFloat()-0.5);
+        this->Set(singleRand.UniformReal(-0.5, 0.5), singleRand.UniformReal(-0.5, 0.5), singleRand.UniformReal(-0.5, 0.5));
         l = length_2();
       }
     while ( (l > 1.0) || (l < 1e-4) );
     this->normalize();
+#else
+    double z = singleRand.UniformReal(-1.0, 1.0);
+    double phi = singleRand.UniformReal(0.0, 2 * M_PI);
+    double rho = sqrt(1.0 - z * z);
+    this->Set(rho * cos(phi), rho * sin(phi), z);
+#endif
   }
 
   OBAPI ostream& operator<< ( ostream& co, const vector3& v )
@@ -222,24 +232,17 @@ namespace OpenBabel
   OBAPI double CalcTorsionAngle(const vector3 &a, const vector3 &b,
                                 const vector3 &c, const vector3 &d)
   {
-
-    double torsion;
-    vector3 b1,b2,b3,c1,c2,c3;
-
-    b1 = a - b;
-    b2 = b - c;
-    b3 = c - d;
+    vector3 b1 = a - b;
+    vector3 b2 = b - c;
+    vector3 b3 = c - d;
 
 #ifdef OB_OLD_MATH_CHECKS
-    c1 = cross(b1,b2);
-    c2 = cross(b2,b3);
-    c3 = cross(c1,c2);
-
+    vector3 c1 = cross(b1, b2);
+    vector3 c2 = cross(b2, b3);
 
     if (c1.length() * c2.length() < 0.001)
     {
-      torsion = 0.0;
-      return torsion;
+      return 0.0;
     }
 #endif
 
@@ -247,7 +250,7 @@ namespace OpenBabel
 
     vector3 b2xb3 = cross(b2, b3);
     vector3 b1xb2 = cross(b1, b2);
-    torsion = - atan2(dot(rb2 * b1, b2xb3), dot(b1xb2, b2xb3));
+    double torsion = - atan2(dot(rb2 * b1, b2xb3), dot(b1xb2, b2xb3));
 
     return(torsion * RAD_TO_DEG);
   }

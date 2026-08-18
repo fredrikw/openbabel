@@ -164,8 +164,6 @@ namespace OpenBabel
       // WARNING: Atom index issue here
       a->SetPartialCharge(charges[a->GetIdx() - 1]);
 
-      cerr << " charge : " << charges[a->GetIdx() - 1] << endl;
-
       if (!a->HasData("Radius")) {
         std::ostringstream s;
         s << radii[ a->GetIdx()-1 ];
@@ -174,8 +172,6 @@ namespace OpenBabel
         p->SetValue( s.str() );
         a->SetData(p);
       }
-
-      cerr << " radius : " << radii[a->GetIdx() - 1] << endl;
 
     }
     mol.SetPartialChargesPerceived();
@@ -261,6 +257,14 @@ namespace OpenBabel
 
     while (!atmid.empty() && atmid[atmid.size()-1] == ' ')
       atmid = atmid.substr(0,atmid.size()-1);
+
+    // A blank atom-name field leaves atmid empty. The element-guessing logic
+    // below indexes atmid[1] and calls atmid.substr(1, ...), which would read
+    // out of bounds or throw std::out_of_range on an empty string. An
+    // uncaught throw here unwinds past the caller and leaks the molecule, so
+    // skip the malformed record instead.
+    if (atmid.empty())
+      return(false);
 
     /* residue name */
 

@@ -156,7 +156,7 @@ namespace OpenBabel
 
   void matrix3x3::SetColumn(int col, const vector3 &v)
 #ifdef OB_OLD_MATH_CHECKS
-  throw(OBError)
+  noexcept(false)
 #endif
   {
 #ifdef OB_OLD_MATH_CHECKS
@@ -176,7 +176,7 @@ namespace OpenBabel
 
   void matrix3x3::SetRow(int row, const vector3 &v)
 #ifdef OB_OLD_MATH_CHECKS
-  throw(OBError)
+  noexcept(false)
 #endif
   {
 #ifdef OB_OLD_MATH_CHECKS
@@ -196,7 +196,7 @@ namespace OpenBabel
 
   vector3 matrix3x3::GetColumn(unsigned int col) const
 #ifdef OB_OLD_MATH_CHECKS
-  throw(OBError)
+  noexcept(false)
 #endif
   {
 #ifdef OB_OLD_MATH_CHECKS
@@ -214,7 +214,7 @@ namespace OpenBabel
 
   vector3 matrix3x3::GetRow(unsigned int row) const
 #ifdef OB_OLD_MATH_CHECKS
-  throw(OBError)
+  noexcept(false)
 #endif
   {
 #ifdef OB_OLD_MATH_CHECKS
@@ -270,9 +270,9 @@ namespace OpenBabel
   {
     vector3 vv;
 
-    vv.SetX(x()*m.Get(0,0) + y()*m.Get(0,1) + z()*m.Get(0,2));
-    vv.SetY(x()*m.Get(1,0) + y()*m.Get(1,1) + z()*m.Get(1,2));
-    vv.SetZ(x()*m.Get(2,0) + y()*m.Get(2,1) + z()*m.Get(2,2));
+    vv.SetX(x()*m(0,0) + y()*m(0,1) + z()*m(0,2));
+    vv.SetY(x()*m(1,0) + y()*m(1,1) + z()*m(1,2));
+    vv.SetZ(x()*m(2,0) + y()*m(2,1) + z()*m(2,2));
     x() = vv.x();
     y() = vv.y();
     z() = vv.z();
@@ -293,7 +293,7 @@ namespace OpenBabel
   */
   matrix3x3 matrix3x3::inverse(void) const
 #ifdef OB_OLD_MATH_CHECKS
-  throw(OBError)
+  noexcept(false)
 #endif
   {
     double det = determinant();
@@ -416,7 +416,7 @@ namespace OpenBabel
   */
   matrix3x3 matrix3x3::findEigenvectorsIfSymmetric(vector3 &eigenvals) const
 #ifdef OB_OLD_MATH_CHECKS
-  throw(OBError)
+  noexcept(false)
 #endif
   {
     matrix3x3 result;
@@ -424,7 +424,7 @@ namespace OpenBabel
 #ifdef OB_OLD_MATH_CHECKS
     if (!isSymmetric())
       {
-        OBError er("matrix3x3::findEigenvectorsIfSymmetric(vector3 &eigenvals) const throw(OBError)",
+        OBError er("matrix3x3::findEigenvectorsIfSymmetric(vector3 &eigenvals) const noexcept(false)",
                    "The method was called on a matrix that was not symmetric, i.e. where isSymetric() == false.",
                    "This is a runtime or a programming error in your application.");
         throw er;

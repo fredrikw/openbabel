@@ -44,7 +44,7 @@ namespace OpenBabel {
         "The format used by CASTEP.\n\n";
     }
 
-    const char* SpecificationURL() override { return "http://www.castep.org/"; }
+    const char* SpecificationURL() override { return "https://www.castep.org/"; }
 
     /* Flags() can return be any of the following combined by |
        or be omitted if none apply
@@ -55,7 +55,7 @@ namespace OpenBabel {
       return READONEONLY | NOTWRITABLE;
     }
 
-    int SkipObjects(int n, OBConversion* pConv) override
+    int SkipObjects(int /*n*/, OBConversion* /*pConv*/) override
     {
       return 0;
     }
@@ -162,21 +162,27 @@ namespace OpenBabel {
       if (strstr(buffer, "Final Enthalpy")) {
         hasEnthalpyData = true;
         tokenize(vs, buffer);
-        enthalpy = atof(vs[4].c_str()) * EV_TO_KCAL_PER_MOL;
+        if (vs.size() > 4) {
+          enthalpy = atof(vs[4].c_str()) * EV_TO_KCAL_PER_MOL;
+        }
       }
 
       // volume
       if (strstr(buffer, "Current cell volume =")) {
         hasVolumeData = true;
         tokenize(vs, buffer);
-        volume = atof(vs[4].c_str());
+        if (vs.size() > 4) {
+          volume = atof(vs[4].c_str());
+        }
       }
 
       // pressure
       if (strstr(buffer, " *  Pressure:")) {
         hasPressureData = true;
         tokenize(vs, buffer);
-        pressure = atof(vs[2].c_str());
+        if (vs.size() > 2) {
+          pressure = atof(vs[2].c_str());
+        }
       }
     }
 

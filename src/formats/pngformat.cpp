@@ -147,7 +147,9 @@ public:
     if(!CopyOfInput.empty() && bytesToIEND>0)
     {
       OBBase* pOb = pConv->GetChemObject();
-      return WriteMolecule(pOb, pConv);
+      bool ret = WriteMolecule(pOb, pConv);
+      delete pOb; // WriteMolecule does not take ownership; free it here
+      return ret;
     }
     else
     {
@@ -210,7 +212,7 @@ PNGFormat thePNGFormat;
 
 /////////////////////////////////////////////////////////////////
 
-bool PNGFormat::ReadMolecule(OBBase* pOb, OBConversion* pConv)
+bool PNGFormat::ReadMolecule(OBBase* /*pOb*/, OBConversion* pConv)
 {
   istream& ifs = *pConv->GetInStream();
   if(pConv->IsFirstInput())
@@ -247,7 +249,14 @@ bool PNGFormat::ReadMolecule(OBBase* pOb, OBConversion* pConv)
     {
       string keyword;
       getline(ifs, keyword, '\0');
-      unsigned int datalength = len - keyword.size()-1;
+      if(keyword.size()+1 > len)
+      {
+        obErrorLog.ThrowError("PNG Format","Illegal chunk length", obError);
+        return false;
+      }
+      // size_t (64-bit on all supported platforms) so that datalength*6 below
+      // cannot wrap around even for a maximal (~4GB) chunk length.
+      size_t datalength = len - keyword.size()-1;
 
       //remove "file" from end of keyword
       transform(keyword.begin(),keyword.end(),keyword.begin(),::tolower);
@@ -275,8 +284,11 @@ bool PNGFormat::ReadMolecule(OBBase* pOb, OBConversion* pConv)
           Bytef* pCompTxt = new Bytef[datalength];
           ifs.read((char*)pCompTxt, datalength);
           --datalength; //for compression method byte
-          uLongf uncompLen;
-          Bytef* pUncTxt = new Bytef[datalength*6];//guess uncompressed length. NASTY!
+          //guess uncompressed length. NASTY! But uncompLen tells uncompress()
+          //the real capacity of pUncTxt, so it errors out (Z_BUF_ERROR) rather
+          //than overrunning the buffer if the guess is too small.
+          uLongf uncompLen = datalength*6;
+          Bytef* pUncTxt = new Bytef[uncompLen];
           if(*pCompTxt!=0 /*compression method*/
             || uncompress(pUncTxt, &uncompLen, pCompTxt+1, datalength)!=Z_OK)
           {
@@ -355,7 +367,18 @@ bool PNGFormat::WriteMolecule(OBBase* pOb, OBConversion* pConv)
       formatID.erase(pos);
   }
   else //if no param on -xO option, format is input format
-    formatID = pConv->GetInFormat()->GetID();
+  {
+    OBFormat *inFormat = pConv->GetInFormat();
+    if (!inFormat) // e.g. writing directly via OBConversion::WriteString
+    {
+      obErrorLog.ThrowError("PNG Format",
+                            "No input format set; use -xO to specify which "
+                            "format to embed in the PNG tEXt chunk.",
+                            obError);
+      return false;
+    }
+    formatID = inFormat->GetID();
+  }
   if(!conv2.SetOutFormat(OBConversion::FindFormat(formatID)))
   {
     obErrorLog.ThrowError("PNG Format","Format not found", obError);

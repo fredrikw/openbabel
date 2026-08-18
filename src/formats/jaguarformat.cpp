@@ -48,7 +48,7 @@ namespace OpenBabel
     }
 
     const char* SpecificationURL() override
-    { return "http://www.schrodinger.com/"; } //optional
+    { return "https://www.schrodinger.com/"; }
 
     //Flags() can return be any the following combined by | or be omitted if none apply
     // NOTREADABLE  READONEONLY  NOTWRITABLE  WRITEONEONLY
@@ -83,7 +83,7 @@ namespace OpenBabel
     }
 
     const char* SpecificationURL() override
-    { return "http://www.schrodinger.com/"; } //optional
+    { return "https://www.schrodinger.com/"; }
 
     //Flags() can return be any the following combined by | or be omitted if none apply
     // NOTREADABLE  READONEONLY  NOTWRITABLE  WRITEONEONLY
@@ -165,7 +165,10 @@ namespace OpenBabel
                 for (vector<string>::size_type icount=1;icount<vs.size();++icount)
                   {
                     chgcount=chgcount+1;
-                    mol.GetAtom(chgcount)->SetPartialCharge(atof((char*)vs[icount].c_str()));
+                    OBAtom *atom = mol.GetAtom(chgcount);
+                    if (!atom)
+                      break;
+                    atom->SetPartialCharge(atof((char*)vs[icount].c_str()));
                   }
               }
           }

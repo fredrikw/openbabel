@@ -47,8 +47,9 @@ namespace OpenBabel
         "  b  Disable bonding entirely\n\n";
     }
 
-    const char* SpecificationURL() override
-    { return "http://www.xcrysden.org/doc/XSF.html/"; }  // optional
+    const char* SpecificationURL() override {
+      return "http://www.xcrysden.org/doc/XSF.html/"; // XXX dead
+    }
 
     //Flags() can return be any the following combined by | or be omitted if none apply
     // NOTREADABLE  READONEONLY  NOTWRITABLE  WRITEONEONLY
@@ -168,6 +169,9 @@ namespace OpenBabel
     mol.EndModify();
 
     int natom = mol.NumAtoms();
+    if (natom == 0)
+      return false;
+
     int numConformers = atomPositions.size() / natom;
     for (int i = 0; i < numConformers; ++i) {
       double *coordinates = new double[natom * 3];
@@ -179,8 +183,13 @@ namespace OpenBabel
       }
       mol.AddConformer(coordinates);
     }
-    // Delete first conformer, created by EndModify, bunch of 0s
-    mol.DeleteConformer(0);
+    // Delete first conformer, created by EndModify, bunch of 0s -- but only
+    // if we actually added real conformers above. If no frame supplied a full
+    // set of positions (numConformers == 0), deleting the only conformer would
+    // leave the molecule's active coordinate pointer dangling and crash the
+    // ConnectTheDots() below.
+    if (mol.NumConformers() > 1)
+      mol.DeleteConformer(0);
     // Set geometry to last one
     mol.SetConformer(mol.NumConformers() - 1);
 

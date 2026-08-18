@@ -1,6 +1,6 @@
 # Library versioning
-set(SOVERSION 7)
-set(LIBRARY_VERSION 7.0.0)
+set(SOVERSION 8)
+set(LIBRARY_VERSION 8.0.0)
 
 
 find_package(Boost 1.45.0 COMPONENTS system)
@@ -15,7 +15,7 @@ set(charges
   charges/fromfile.cpp
 )
 
-if (EIGEN2_FOUND OR EIGEN3_FOUND)
+if (TARGET Eigen3::Eigen)
 # if eigen is available, compile QEq, EQeq, and QTPIE charge models
 set(charges ${charges}
   charges/eqeq.cpp
@@ -34,9 +34,14 @@ set(descriptors
   descriptors/cmpdfilter.cpp
   descriptors/groupcontrib.cpp
   descriptors/filters.cpp
-  descriptors/inchidescriptor.cpp
   descriptors/smartsdescriptors.cpp
 )
+
+if(WITH_INCHI)
+  set(descriptors ${descriptors}
+    descriptors/inchidescriptor.cpp
+  )
+endif()
 
 set(fingerprints
   fingerprints/finger2.cpp
@@ -58,7 +63,7 @@ set(math_srcs
   math/vector3.cpp
 )
 
-if(EIGEN2_FOUND OR EIGEN3_FOUND)
+if(TARGET Eigen3::Eigen)
   set(math_srcs ${math_srcs}
     math/align.cpp
   )
@@ -89,7 +94,7 @@ set(ops
   ops/ophighlight.cpp
   ops/xout.cpp
 )
-if(EIGEN2_FOUND OR EIGEN3_FOUND)
+if(TARGET Eigen3::Eigen)
   set(ops ${ops}
     ops/conformer.cpp
     ops/opalign.cpp
@@ -117,6 +122,7 @@ set(openbabel_srcs
   bond.cpp
   bondtyper.cpp
   builder.cpp
+  macrocycle.cpp
   canon.cpp
   chains.cpp
   chargemodel.cpp
@@ -163,7 +169,7 @@ set(openbabel_srcs
   typer.cpp
   obmolecformat.cpp
 )
-if(EIGEN2_FOUND OR EIGEN3_FOUND)
+if(TARGET Eigen3::Eigen)
   set(openbabel_srcs ${openbabel_srcs}
     conformersearch.cpp
     confsearch.cpp
@@ -255,6 +261,9 @@ target_link_libraries(openbabel PRIVATE ${libs})
 if(Boost_FOUND)
     include_directories(${Boost_INCLUDE_DIRS})
 endif()
+if(TARGET Eigen3::Eigen)
+    target_link_libraries(openbabel PUBLIC Eigen3::Eigen)
+endif()
 
 if(BUILD_SHARED OR BUILD_MIXED)
     set(THREADS_PREFER_PTHREAD_FLAG ON)
@@ -302,3 +311,7 @@ if(BUILD_SHARED)
 
   add_subdirectory(formats)
 endif(BUILD_SHARED)
+
+if("${WITH_INCHI}" AND "${OPENBABEL_USE_SYSTEM_INCHI}")
+  target_include_directories(plugin_descriptors PRIVATE "${INCHI_INCLUDE_DIR}")
+endif()
